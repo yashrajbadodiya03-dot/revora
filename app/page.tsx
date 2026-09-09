@@ -112,7 +112,14 @@ export default function Home() {
           );
         }
 
-        setOpportunities(opportunityData ?? []);
+    setOpportunities(
+  (opportunityData ?? []).map((opportunity) => ({
+    ...opportunity,
+    customer: Array.isArray(opportunity.customer)
+      ? opportunity.customer[0] ?? null
+      : opportunity.customer ?? null,
+  }))
+);
       } catch (err) {
         console.error(err);
 
