@@ -3,6 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "../../lib/supabase";
 
+type Customer = {
+  name: string;
+  email: string | null;
+  phone: string | null;
+};
+
 type Opportunity = {
   id: string;
   title: string;
@@ -12,11 +18,7 @@ type Opportunity = {
   priority_score: number;
   probability_score: number;
   status: string;
-  customer?: {
-    name: string;
-    email: string | null;
-    phone: string | null;
-  } | null;
+  customer?: Customer | null;
 };
 
 type Business = {
@@ -76,12 +78,11 @@ export default function AIRecoveryPage() {
           );
         }
 
-        const { data: businessData, error: businessError } =
-          await supabase
-            .from("businesses")
-            .select("id, name")
-            .eq("id", profile.business_id)
-            .single();
+        const { data: businessData, error: businessError } = await supabase
+          .from("businesses")
+          .select("id, name")
+          .eq("id", profile.business_id)
+          .single();
 
         if (businessError) {
           throw new Error(`Business error: ${businessError.message}`);
@@ -89,11 +90,13 @@ export default function AIRecoveryPage() {
 
         setBusiness(businessData);
 
-        const { data: opportunityData, error: opportunityError } =
-          await supabase
-            .from("opportunities")
-            .select(
-              `
+        const {
+          data: opportunityData,
+          error: opportunityError,
+        } = await supabase
+          .from("opportunities")
+          .select(
+            `
               id,
               title,
               description,
@@ -108,13 +111,13 @@ export default function AIRecoveryPage() {
                 phone
               )
             `
-            )
-            .eq("business_id", profile.business_id)
-            .neq("status", "recovered")
-            .neq("status", "closed")
-            .order("priority_score", {
-              ascending: false,
-            });
+          )
+          .eq("business_id", profile.business_id)
+          .neq("status", "recovered")
+          .neq("status", "closed")
+          .order("priority_score", {
+            ascending: false,
+          });
 
         if (opportunityError) {
           throw new Error(
@@ -122,7 +125,25 @@ export default function AIRecoveryPage() {
           );
         }
 
-        setOpportunities(opportunityData ?? []);
+        const normalizedOpportunities: Opportunity[] = (
+          opportunityData ?? []
+        ).map((opportunity) => ({
+          id: opportunity.id,
+          title: opportunity.title,
+          description: opportunity.description,
+          type: opportunity.type,
+          estimated_value: Number(opportunity.estimated_value ?? 0),
+          priority_score: Number(opportunity.priority_score ?? 0),
+          probability_score: Number(
+            opportunity.probability_score ?? 0
+          ),
+          status: opportunity.status,
+          customer: Array.isArray(opportunity.customer)
+            ? opportunity.customer[0] ?? null
+            : opportunity.customer ?? null,
+        }));
+
+        setOpportunities(normalizedOpportunities);
       } catch (err) {
         console.error(err);
 
@@ -147,7 +168,13 @@ export default function AIRecoveryPage() {
     }).format(value);
 
   const getInitials = (name: string) => {
-    const parts = name.trim().split(" ");
+    const trimmed = name.trim();
+
+    if (!trimmed) {
+      return "RV";
+    }
+
+    const parts = trimmed.split(/\s+/);
 
     if (parts.length === 1) {
       return parts[0].slice(0, 2).toUpperCase();
@@ -160,9 +187,15 @@ export default function AIRecoveryPage() {
     opportunity: Opportunity
   ): RecoveryRecommendation {
     const type = opportunity.type.toLowerCase();
-    const probability = Number(opportunity.probability_score || 0);
-    const priority = Number(opportunity.priority_score || 0);
-    const value = Number(opportunity.estimated_value || 0);
+    const probability = Number(
+      opportunity.probability_score || 0
+    );
+    const priority = Number(
+      opportunity.priority_score || 0
+    );
+    const value = Number(
+      opportunity.estimated_value || 0
+    );
 
     if (opportunity.status === "scheduled") {
       return {
@@ -234,7 +267,8 @@ export default function AIRecoveryPage() {
   );
 
   const highPriority = opportunities.filter(
-    (opportunity) => opportunity.priority_score >= 80
+    (opportunity) =>
+      Number(opportunity.priority_score || 0) >= 80
   ).length;
 
   const averageProbability =
@@ -242,7 +276,10 @@ export default function AIRecoveryPage() {
       ? Math.round(
           opportunities.reduce(
             (total, opportunity) =>
-              total + Number(opportunity.probability_score || 0),
+              total +
+              Number(
+                opportunity.probability_score || 0
+              ),
             0
           ) / opportunities.length
         )
@@ -273,6 +310,7 @@ export default function AIRecoveryPage() {
 
           <nav className="space-y-1.5">
             <button
+              type="button"
               onClick={() => {
                 window.location.href = "/";
               }}
@@ -282,6 +320,7 @@ export default function AIRecoveryPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 window.location.href = "/opportunities";
               }}
@@ -290,11 +329,15 @@ export default function AIRecoveryPage() {
               Opportunities
             </button>
 
-            <button className="w-full rounded-xl bg-white px-4 py-3 text-left text-sm font-medium text-black">
+            <button
+              type="button"
+              className="w-full rounded-xl bg-white px-4 py-3 text-left text-sm font-medium text-black"
+            >
               AI Recovery
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 window.location.href = "/follow-ups";
               }}
@@ -304,6 +347,7 @@ export default function AIRecoveryPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 window.location.href = "/roi";
               }}
@@ -313,6 +357,7 @@ export default function AIRecoveryPage() {
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 window.location.href = "/settings";
               }}
@@ -330,7 +375,9 @@ export default function AIRecoveryPage() {
 
             <div className="mt-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                {business ? getInitials(business.name) : "RV"}
+                {business
+                  ? getInitials(business.name)
+                  : "RV"}
               </div>
 
               <div className="min-w-0">
@@ -374,7 +421,9 @@ export default function AIRecoveryPage() {
               title={userEmail}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white"
             >
-              {business ? getInitials(business.name) : "RV"}
+              {business
+                ? getInitials(business.name)
+                : "RV"}
             </div>
           </header>
 
@@ -405,6 +454,7 @@ export default function AIRecoveryPage() {
                 </p>
 
                 <button
+                  type="button"
                   onClick={() => {
                     window.location.reload();
                   }}
@@ -470,8 +520,8 @@ export default function AIRecoveryPage() {
                     </h3>
 
                     <p className="mt-1 text-xs text-gray-500">
-                      Prioritized using opportunity value, priority and
-                      recovery probability.
+                      Prioritized using opportunity value,
+                      priority and recovery probability.
                     </p>
                   </div>
 
@@ -486,146 +536,167 @@ export default function AIRecoveryPage() {
                       </p>
 
                       <p className="mt-2 text-sm text-gray-500">
-                        Revora will show AI recovery recommendations when
-                        active opportunities are available.
+                        Revora will show AI recovery recommendations
+                        when active opportunities are available.
                       </p>
                     </div>
                   ) : (
                     <div>
-                      {opportunities.map((opportunity, index) => {
-                        const customerName =
-                          opportunity.customer?.name ||
-                          opportunity.title ||
-                          "Unknown customer";
+                      {opportunities.map(
+                        (opportunity, index) => {
+                          const customerName =
+                            opportunity.customer?.name ||
+                            opportunity.title ||
+                            "Unknown customer";
 
-                        const recommendation =
-                          getRecoveryRecommendation(opportunity);
+                          const recommendation =
+                            getRecoveryRecommendation(
+                              opportunity
+                            );
 
-                        return (
-                          <div
-                            key={opportunity.id}
-                            className={`p-6 transition hover:bg-white/[0.025] ${
-                              index !== opportunities.length - 1
-                                ? "border-b border-white/10"
-                                : ""
-                            }`}
-                          >
-                            {/* OPPORTUNITY HEADER */}
-                            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                              <div className="flex min-w-0 items-center gap-4">
-                                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                                  {getInitials(customerName)}
-                                </div>
-
-                                <div className="min-w-0">
-                                  <h4 className="font-semibold">
-                                    {customerName}
-                                  </h4>
-
-                                  <p className="mt-1 text-sm text-gray-500">
-                                    {opportunity.type}
-                                  </p>
-
-                                  {opportunity.description && (
-                                    <p className="mt-2 max-w-xl text-sm leading-6 text-gray-400">
-                                      {opportunity.description}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* STATS */}
-                              <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
-                                <div>
-                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                    VALUE
-                                  </p>
-
-                                  <p className="mt-1 text-lg font-semibold">
-                                    {formatMoney(
-                                      Number(opportunity.estimated_value)
+                          return (
+                            <div
+                              key={opportunity.id}
+                              className={`p-6 transition hover:bg-white/[0.025] ${
+                                index !==
+                                opportunities.length - 1
+                                  ? "border-b border-white/10"
+                                  : ""
+                              }`}
+                            >
+                              {/* OPPORTUNITY HEADER */}
+                              <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                                <div className="flex min-w-0 items-center gap-4">
+                                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-indigo-500/15 text-sm font-bold text-indigo-400">
+                                    {getInitials(
+                                      customerName
                                     )}
-                                  </p>
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <h4 className="font-semibold">
+                                      {customerName}
+                                    </h4>
+
+                                    <p className="mt-1 text-sm text-gray-500">
+                                      {opportunity.type}
+                                    </p>
+
+                                    {opportunity.description && (
+                                      <p className="mt-2 max-w-xl text-sm leading-6 text-gray-400">
+                                        {
+                                          opportunity.description
+                                        }
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
 
-                                <div>
-                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                    PRIORITY
-                                  </p>
+                                {/* STATS */}
+                                <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
+                                  <div>
+                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                      VALUE
+                                    </p>
 
-                                  <p className="mt-1 text-lg font-semibold text-emerald-500">
-                                    {opportunity.priority_score}
-                                  </p>
-                                </div>
+                                    <p className="mt-1 text-lg font-semibold">
+                                      {formatMoney(
+                                        Number(
+                                          opportunity.estimated_value
+                                        )
+                                      )}
+                                    </p>
+                                  </div>
 
-                                <div>
-                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                    PROBABILITY
-                                  </p>
+                                  <div>
+                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                      PRIORITY
+                                    </p>
 
-                                  <p className="mt-1 text-lg font-semibold text-indigo-400">
-                                    {opportunity.probability_score}%
-                                  </p>
+                                    <p className="mt-1 text-lg font-semibold text-emerald-500">
+                                      {
+                                        opportunity.priority_score
+                                      }
+                                    </p>
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                      PROBABILITY
+                                    </p>
+
+                                    <p className="mt-1 text-lg font-semibold text-indigo-400">
+                                      {
+                                        opportunity.probability_score
+                                      }
+                                      %
+                                    </p>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
 
-                            {/* AI RECOMMENDATION */}
-                            <div className="mt-6 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5">
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-xs font-bold text-white">
-                                  AI
+                              {/* AI RECOMMENDATION */}
+                              <div className="mt-6 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-xs font-bold text-white">
+                                    AI
+                                  </div>
+
+                                  <div>
+                                    <p className="text-sm font-semibold">
+                                      Recommended recovery action
+                                    </p>
+
+                                    <p className="text-xs text-gray-500">
+                                      {
+                                        recommendation.label
+                                      }
+                                    </p>
+                                  </div>
                                 </div>
 
-                                <div>
-                                  <p className="text-sm font-semibold">
-                                    Recommended recovery action
-                                  </p>
+                                <p className="mt-4 text-sm leading-6 text-gray-400">
+                                  {recommendation.text}
+                                </p>
 
-                                  <p className="text-xs text-gray-500">
-                                    {recommendation.label}
-                                  </p>
-                                </div>
-                              </div>
+                                {/* ACTIONS */}
+                                <div className="mt-5 flex flex-wrap gap-3">
+                                  {opportunity.customer
+                                    ?.phone && (
+                                    <a
+                                      href={`tel:${opportunity.customer.phone}`}
+                                      className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
+                                    >
+                                      Call Customer
+                                    </a>
+                                  )}
 
-                              <p className="mt-4 text-sm leading-6 text-gray-400">
-                                {recommendation.text}
-                              </p>
+                                  {opportunity.customer
+                                    ?.email && (
+                                    <a
+                                      href={`mailto:${opportunity.customer.email}`}
+                                      className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+                                    >
+                                      Email Customer
+                                    </a>
+                                  )}
 
-                              {/* ACTIONS */}
-                              <div className="mt-5 flex flex-wrap gap-3">
-                                {opportunity.customer?.phone && (
-                                  <a
-                                    href={`tel:${opportunity.customer.phone}`}
-                                    className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
-                                  >
-                                    Call Customer
-                                  </a>
-                                )}
-
-                                {opportunity.customer?.email && (
-                                  <a
-                                    href={`mailto:${opportunity.customer.email}`}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      window.location.href =
+                                        "/opportunities";
+                                    }}
                                     className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
                                   >
-                                    Email Customer
-                                  </a>
-                                )}
-
-                                <button
-                                  onClick={() => {
-                                    window.location.href =
-                                      "/opportunities";
-                                  }}
-                                  className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-                                >
-                                  View Opportunity
-                                </button>
+                                    View Opportunity
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        }
+                      )}
                     </div>
                   )}
                 </div>
@@ -655,7 +726,9 @@ function Metric({
   return (
     <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/20">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{title}</p>
+        <p className="text-sm text-gray-500">
+          {title}
+        </p>
 
         <span className="h-2 w-2 rounded-full bg-indigo-500" />
       </div>
