@@ -112,14 +112,14 @@ export default function Home() {
           );
         }
 
-    setOpportunities(
-  (opportunityData ?? []).map((opportunity) => ({
-    ...opportunity,
-    customer: Array.isArray(opportunity.customer)
-      ? opportunity.customer[0] ?? null
-      : opportunity.customer ?? null,
-  }))
-);
+        setOpportunities(
+          (opportunityData ?? []).map((opportunity) => ({
+            ...opportunity,
+            customer: Array.isArray(opportunity.customer)
+              ? opportunity.customer[0] ?? null
+              : opportunity.customer ?? null,
+          }))
+        );
       } catch (err) {
         console.error(err);
 
@@ -195,118 +195,140 @@ export default function Home() {
     <main className="min-h-screen bg-[#07090d] text-white">
       <div className="flex min-h-screen">
 
-{/* SIDEBAR */}
-<aside className="hidden lg:block w-[250px] shrink-0 border-r border-white/10 bg-[#0a0d12] p-6">
-  {/* LOGO */}
-  <div className="mb-10">
-    <div className="flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white font-black text-black">
-        R
-      </div>
+        {/* SIDEBAR */}
+        <aside className="hidden lg:block w-[250px] shrink-0 border-r border-white/10 bg-[#0a0d12] p-6">
 
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">
-          REVORA
-        </h1>
+          {/* LOGO */}
+          <div className="mb-10">
+            <div className="flex items-center gap-3">
 
-        <p className="text-xs text-gray-500">
-          Revenue Recovery
-        </p>
-      </div>
-    </div>
-  </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white font-black text-black">
+                R
+              </div>
 
-  {/* NAVIGATION */}
-  <nav className="space-y-1.5">
-    <Link
-      href="/"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      Dashboard
-    </Link>
+              <div>
+                <h1 className="text-xl font-bold tracking-tight">
+                  REVORA
+                </h1>
 
-    <Link
-      href="/opportunities"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      Opportunities
-    </Link>
+                <p className="text-xs text-gray-500">
+                  Revenue Recovery
+                </p>
+              </div>
 
-    <Link
-      href="/ai-recovery"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      AI Recovery
-    </Link>
+            </div>
+          </div>
 
-    <Link
-      href="/follow-ups"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      Follow-Ups
-    </Link>
+          {/* NAVIGATION */}
+          <nav className="space-y-1.5">
 
-    <Link
-      href="/roi"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      ROI
-    </Link>
+            <Link
+              href="/"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              Dashboard
+            </Link>
 
-    <Link
-      href="/settings"
-      className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-    >
-      Settings
-    </Link>
-  </nav>
+            <Link
+              href="/opportunities"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              Opportunities
+            </Link>
 
-  {/* WORKSPACE */}
-  <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-    <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">
-      WORKSPACE
-    </p>
+            <Link
+              href="/ai-recovery"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              AI Recovery
+            </Link>
 
-    <div className="mt-4 flex items-center gap-3">
-      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
-        {business ? getInitials(business.name) : "RV"}
-      </div>
+            <Link
+              href="/follow-ups"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              Follow-Ups
+            </Link>
 
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold">
-          {business?.name || "Loading..."}
-        </p>
+            <Link
+              href="/roi"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              ROI
+            </Link>
 
-        <p className="truncate text-xs text-gray-500">
-          Business workspace
-        </p>
-      </div>
-    </div>
-  </div>
-<button
-  type="button"
-  onClick={async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }}
-  className="mt-4 w-full rounded-xl border border-white/10 px-4 py-3 text-left text-sm font-medium text-gray-400 hover:bg-red-500/10 hover:text-red-400"
->
-  Log out
-</button>
-  {/* SYSTEM */}
-  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-    <div className="flex items-center justify-between">
-      <span className="text-xs text-gray-500">
-        System
-      </span>
+            <Link
+              href="/settings"
+              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
+            >
+              Settings
+            </Link>
 
-      <span className="flex items-center gap-1.5 text-xs text-emerald-500">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        Operational
-      </span>
-    </div>
-  </div>
-</aside>
+          </nav>
+
+          {/* WORKSPACE */}
+          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+
+            <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">
+              WORKSPACE
+            </p>
+
+            <div className="mt-4 flex items-center gap-3">
+
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
+                {business ? getInitials(business.name) : "RV"}
+              </div>
+
+              <div className="min-w-0">
+
+                <p className="truncate text-sm font-semibold">
+                  {business?.name || "Loading..."}
+                </p>
+
+                <p className="truncate text-xs text-gray-500">
+                  Business workspace
+                </p>
+
+              </div>
+
+            </div>
+          </div>
+
+          {/* LOGOUT */}
+          <button
+            type="button"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              window.location.href = "/login";
+            }}
+            className="mt-4 w-full rounded-xl border border-white/10 px-4 py-3 text-left text-sm font-medium text-gray-400 hover:bg-red-500/10 hover:text-red-400"
+          >
+            Log out
+          </button>
+
+          {/* SYSTEM */}
+          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+
+            <div className="flex items-center justify-between">
+
+              <span className="text-xs text-gray-500">
+                System
+              </span>
+
+              <span className="flex items-center gap-1.5 text-xs text-emerald-500">
+
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+
+                Operational
+
+              </span>
+
+            </div>
+
+          </div>
+
+        </aside>
+
         {/* MAIN */}
         <section className="min-w-0 flex-1">
 
@@ -321,9 +343,7 @@ export default function Home() {
               title={userEmail}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white"
             >
-              {business
-                ? getInitials(business.name)
-                : "RV"}
+              {business ? getInitials(business.name) : "RV"}
             </div>
 
           </header>
@@ -509,8 +529,7 @@ export default function Home() {
                                       </h4>
 
                                       <p className="text-xs text-gray-500">
-                                        {opportunity.type ||
-                                          "Opportunity"}
+                                        {opportunity.type || "Opportunity"}
                                       </p>
 
                                     </div>
@@ -528,6 +547,7 @@ export default function Home() {
                                 <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
 
                                   <div>
+
                                     <p className="text-[10px] font-semibold tracking-wider text-gray-500">
                                       VALUE
                                     </p>
@@ -539,9 +559,11 @@ export default function Home() {
                                         )
                                       )}
                                     </p>
+
                                   </div>
 
                                   <div>
+
                                     <p className="text-[10px] font-semibold tracking-wider text-gray-500">
                                       PRIORITY
                                     </p>
@@ -549,9 +571,11 @@ export default function Home() {
                                     <p className="mt-1 text-lg font-semibold text-emerald-500">
                                       {opportunity.priority_score}
                                     </p>
+
                                   </div>
 
                                   <div>
+
                                     <p className="text-[10px] font-semibold tracking-wider text-gray-500">
                                       PROBABILITY
                                     </p>
@@ -559,6 +583,7 @@ export default function Home() {
                                     <p className="mt-1 text-lg font-semibold text-indigo-400">
                                       {opportunity.probability_score}%
                                     </p>
+
                                   </div>
 
                                 </div>
