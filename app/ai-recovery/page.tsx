@@ -1,274 +1,268 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "../../lib/supabase";
+import Link from "next/link";
+import Sidebar from "@/components/Sidebar";
+import { createClient } from "@/lib/supabase";
+import { calculateOpportunityScore } from "@/lib/opportunity-scoring";
+
+type Opportunity = {
+  id: string;
+  business_id: string;
+  customer_id: string | null;
+  type: string;
+  title: string;
+  description: string | null;
+  estimated_value: number;
+  priority_score: number;
+  intent_score?: number;
+  probability_score: number;
+  status: string;
+  created_at?: string;
+  recoveryScore?: number;
+  expectedRecovery?: number;
+};
 
 type Customer = {
+  id: string;
   name: string;
   email: string | null;
   phone: string | null;
 };
 
-type Opportunity = {
-  id: string;
-  title: string;
-  description: string | null;
-  type: string;
-  estimated_value: number;
-  priority_score: number;
-  probability_score: number;
-  status: string;
-  customer?: Customer | null;
-};
+type RecommendedChannel = "call" | "email";
 
-type Business = {
-  id: string;
-  name: string;
-};
-
-type RecoveryRecommendation = {
-  label: string;
-  text: string;
-};
+function scoringType(type: string) {
+  if (type === "unanswered_inquiry") return "inquiry" as const;
+  if (type === "missed_call") return "missed_call" as const;
+  if (type === "old_estimate") return "old_estimate" as const;
+  return "no_follow_up" as const;
+}
 
 export default function AIRecoveryPage() {
   const supabase = useMemo(() => createClient(), []);
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [business, setBusiness] = useState<Business | null>(null);
-  const [userEmail, setUserEmail] = useState("");
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [followUpOpportunity, setFollowUpOpportunity] =
+    useState<Opportunity | null>(null);
+
+  const [followUpChannel, setFollowUpChannel] =
+    useState<RecommendedChannel>("email");
+
+  const [followUpMessage, setFollowUpMessage] = useState("");
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [followUpSaving, setFollowUpSaving] = useState(false);
+
   useEffect(() => {
-    async function loadAIRecovery() {
-      setLoading(true);
-      setError("");
+    void loadData();
+  }, []);
 
-      try {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
+  async function loadData() {
+    setLoading(true);
+    setError("");
 
-        if (userError) {
-          throw userError;
-        }
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-        if (!user) {
-          window.location.href = "/login";
-          return;
-        }
+      if (userError) {
+        throw userError;
+      }
 
-        setUserEmail(user.email ?? "");
+      if (!user) {
+        window.location.href = "/login";
+        return;
+      }
 
-        const { data: profile, error: profileError } = await supabase
+      const { data: profile, error: profileError } =
+        await supabase
           .from("profiles")
           .select("business_id")
           .eq("id", user.id)
           .single();
 
-        if (profileError) {
-          throw new Error(`Profile error: ${profileError.message}`);
-        }
+      if (profileError) {
+        throw profileError;
+      }
 
-        if (!profile?.business_id) {
-          throw new Error(
-            "Your account is not connected to a business workspace yet."
-          );
-        }
+      if (!profile?.business_id) {
+        throw new Error("No business workspace found.");
+      }
 
-        const { data: businessData, error: businessError } = await supabase
-          .from("businesses")
-          .select("id, name")
-          .eq("id", profile.business_id)
-          .single();
-
-        if (businessError) {
-          throw new Error(`Business error: ${businessError.message}`);
-        }
-
-        setBusiness(businessData);
-
-        const {
-          data: opportunityData,
-          error: opportunityError,
-        } = await supabase
+      const { data: opportunityData, error: opportunityError } =
+        await supabase
           .from("opportunities")
           .select(
             `
               id,
+              business_id,
+              customer_id,
+              type,
               title,
               description,
-              type,
               estimated_value,
               priority_score,
+              intent_score,
               probability_score,
               status,
-              customer:customers(
-                name,
-                email,
-                phone
-              )
-            `
+              created_at
+            `,
           )
           .eq("business_id", profile.business_id)
           .neq("status", "recovered")
           .neq("status", "closed")
-          .order("priority_score", {
+          .neq("status", "lost")
+          .order("created_at", {
             ascending: false,
           });
 
-        if (opportunityError) {
+      if (opportunityError) {
+        throw new Error(
+          `Opportunities error: ${opportunityError.message}`,
+        );
+      }
+
+      const loadedOpportunities = opportunityData ?? [];
+
+      if (loadedOpportunities.length === 0) {
+        setOpportunities([]);
+        setCustomers([]);
+        return;
+      }
+
+      const customerIds = [
+        ...new Set(
+          loadedOpportunities
+            .map((item) => item.customer_id)
+            .filter(
+              (id): id is string => Boolean(id),
+            ),
+        ),
+      ];
+
+      let loadedCustomers: Customer[] = [];
+
+      if (customerIds.length > 0) {
+        const {
+          data: customerData,
+          error: customerError,
+        } = await supabase
+          .from("customers")
+          .select("id, name, email, phone")
+          .in("id", customerIds);
+
+        if (customerError) {
           throw new Error(
-            `Opportunities error: ${opportunityError.message}`
+            `Customers error: ${customerError.message}`,
           );
         }
 
-        const normalizedOpportunities: Opportunity[] = (
-          opportunityData ?? []
-        ).map((opportunity) => ({
-          id: opportunity.id,
-          title: opportunity.title,
-          description: opportunity.description,
-          type: opportunity.type,
-          estimated_value: Number(opportunity.estimated_value ?? 0),
-          priority_score: Number(opportunity.priority_score ?? 0),
-          probability_score: Number(
-            opportunity.probability_score ?? 0
-          ),
-          status: opportunity.status,
-          customer: Array.isArray(opportunity.customer)
-            ? opportunity.customer[0] ?? null
-            : opportunity.customer ?? null,
-        }));
-
-        setOpportunities(normalizedOpportunities);
-      } catch (err) {
-        console.error(err);
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Something went wrong while loading AI Recovery."
-        );
-      } finally {
-        setLoading(false);
+        loadedCustomers = customerData ?? [];
       }
+
+      setCustomers(loadedCustomers);
+
+      const rankedOpportunities: Opportunity[] =
+        loadedOpportunities
+          .map((opportunity) => {
+            const value = Math.max(
+              0,
+              Number(opportunity.estimated_value || 0),
+            );
+
+            const hoursSinceCreated = opportunity.created_at
+              ? Math.max(
+                  0,
+                  (Date.now() -
+                    new Date(opportunity.created_at).getTime()) /
+                    (1000 * 60 * 60),
+                )
+              : 24;
+
+            const score = calculateOpportunityScore({
+              type: scoringType(opportunity.type),
+              revenue: value,
+              hoursSinceCreated,
+              status:
+                opportunity.status as
+                  | "new"
+                  | "contacted"
+                  | "in_progress"
+                  | "recovered"
+                  | "lost",
+              customerResponded: false,
+              followUpCount: 0,
+            });
+
+            return {
+              ...opportunity,
+              priority_score: score.score,
+              probability_score: score.recoveryProbability,
+              recoveryScore: score.score,
+              expectedRecovery: Math.round(
+                value * (score.recoveryProbability / 100),
+              ),
+            };
+          })
+          .sort(
+            (a, b) =>
+              (b.recoveryScore ?? 0) -
+              (a.recoveryScore ?? 0),
+          );
+
+      setOpportunities(rankedOpportunities);
+    } catch (err) {
+      console.error(
+        "AI Recovery load error:",
+        err,
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading AI Recovery.",
+      );
+
+      setOpportunities([]);
+      setCustomers([]);
+    } finally {
+      setLoading(false);
     }
-
-    loadAIRecovery();
-  }, [supabase]);
-
-  const formatMoney = (value: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(value);
-
-  const getInitials = (name: string) => {
-    const trimmed = name.trim();
-
-    if (!trimmed) {
-      return "RV";
-    }
-
-    const parts = trimmed.split(/\s+/);
-
-    if (parts.length === 1) {
-      return parts[0].slice(0, 2).toUpperCase();
-    }
-
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  };
-
-  function getRecoveryRecommendation(
-    opportunity: Opportunity
-  ): RecoveryRecommendation {
-    const type = opportunity.type.toLowerCase();
-    const probability = Number(
-      opportunity.probability_score || 0
-    );
-    const priority = Number(
-      opportunity.priority_score || 0
-    );
-    const value = Number(
-      opportunity.estimated_value || 0
-    );
-
-    if (opportunity.status === "scheduled") {
-      return {
-        label: "Meeting scheduled",
-        text: `Prepare for the scheduled conversation with the customer. This opportunity is worth ${formatMoney(
-          value
-        )} and has a ${probability}% estimated recovery probability.`,
-      };
-    }
-
-    if (opportunity.status === "contacting") {
-      return {
-        label: "Follow up now",
-        text: `Continue following up with this customer. The opportunity has a ${probability}% recovery probability and a priority score of ${priority}.`,
-      };
-    }
-
-    if (type.includes("missed")) {
-      return {
-        label: "Call customer",
-        text: `Contact this customer as soon as possible. A missed call represents a direct recovery opportunity worth ${formatMoney(
-          value
-        )}.`,
-      };
-    }
-
-    if (type.includes("follow")) {
-      return {
-        label: "Send follow-up",
-        text: `Send a follow-up to this customer. The current recovery probability is ${probability}%, making this worth another contact.`,
-      };
-    }
-
-    if (type.includes("quote")) {
-      return {
-        label: "Follow up on quote",
-        text: `Follow up on the quote before the opportunity goes cold. The estimated value is ${formatMoney(
-          value
-        )}.`,
-      };
-    }
-
-    if (probability >= 80 && priority >= 80) {
-      return {
-        label: "Recover immediately",
-        text: `This is a high-priority opportunity with an ${probability}% recovery probability. Contact the customer immediately.`,
-      };
-    }
-
-    if (priority >= 80) {
-      return {
-        label: "High-priority follow-up",
-        text: `Prioritize this customer because the opportunity has a priority score of ${priority}.`,
-      };
-    }
-
-    return {
-      label: "Follow up",
-      text: `Follow up with this customer and assess whether the ${formatMoney(
-        value
-      )} opportunity can be recovered.`,
-    };
   }
 
-  const potentialRevenue = opportunities.reduce(
+  function getCustomer(customerId: string | null) {
+    if (!customerId) {
+      return undefined;
+    }
+
+    return customers.find(
+      (customer) => customer.id === customerId,
+    );
+  }
+
+  const recoverableRevenue = opportunities.reduce(
     (total, opportunity) =>
-      total + Number(opportunity.estimated_value || 0),
-    0
+      total +
+      Number(opportunity.estimated_value || 0),
+    0,
+  );
+
+  const expectedRecovery = opportunities.reduce(
+    (total, opportunity) =>
+      total +
+      Number(opportunity.expectedRecovery || 0),
+    0,
   );
 
   const highPriority = opportunities.filter(
     (opportunity) =>
-      Number(opportunity.priority_score || 0) >= 80
+      Number(opportunity.recoveryScore || 0) >= 75,
   ).length;
 
   const averageProbability =
@@ -278,467 +272,1140 @@ export default function AIRecoveryPage() {
             (total, opportunity) =>
               total +
               Number(
-                opportunity.probability_score || 0
+                opportunity.probability_score || 0,
               ),
-            0
-          ) / opportunities.length
+            0,
+          ) / opportunities.length,
         )
       : 0;
+
+  function formatCurrency(value: number) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(value);
+  }
+
+  function getScoreLabel(score: number) {
+    if (score >= 85) {
+      return {
+        label: "Critical",
+        className:
+          "border-red-500/20 bg-red-500/10 text-red-400",
+      };
+    }
+
+    if (score >= 75) {
+      return {
+        label: "High",
+        className:
+          "border-amber-500/20 bg-amber-500/10 text-amber-400",
+      };
+    }
+
+    if (score >= 60) {
+      return {
+        label: "Medium",
+        className:
+          "border-indigo-500/20 bg-indigo-500/10 text-indigo-400",
+      };
+    }
+
+    return {
+      label: "Low",
+      className:
+        "border-white/10 bg-white/5 text-gray-400",
+    };
+  }
+
+  function getRecommendation(
+    opportunity: Opportunity,
+  ) {
+    const priority = Number(
+      opportunity.priority_score || 0,
+    );
+
+    const probability = Number(
+      opportunity.probability_score || 0,
+    );
+
+    const value = Number(
+      opportunity.estimated_value || 0,
+    );
+
+    if (priority >= 90) {
+      return "Contact immediately. This opportunity has exceptional recovery priority.";
+    }
+
+    if (probability >= 85) {
+      return "Strong recovery probability. Follow up as soon as possible.";
+    }
+
+    if (value >= 30000) {
+      return "High-value opportunity. Use personalized outreach and prioritize a direct conversation.";
+    }
+
+    if (opportunity.type === "missed_call") {
+      return "Call back quickly. Missed calls are time-sensitive recovery opportunities.";
+    }
+
+    if (opportunity.type === "unanswered_inquiry") {
+      return "Respond quickly and move the customer toward the next step.";
+    }
+
+    if (opportunity.type === "old_estimate") {
+      return "Reconnect with the customer and determine whether they are still considering the estimate.";
+    }
+
+    if (opportunity.type === "no_follow_up") {
+      return "Customer has not received timely follow-up. Re-engage now.";
+    }
+
+    return "Follow up with a personalized recovery message.";
+  }
+
+  function getRecommendedChannel(
+    opportunity: Opportunity,
+    customer?: Customer,
+  ): RecommendedChannel {
+    if (
+      opportunity.type === "missed_call" ||
+      opportunity.type === "no_follow_up"
+    ) {
+      return "call";
+    }
+
+    if (
+      opportunity.priority_score >= 85 &&
+      customer?.phone
+    ) {
+      return "call";
+    }
+
+    if (customer?.email) {
+      return "email";
+    }
+
+    return "call";
+  }
+
+  function getWhyItMatters(
+    opportunity: Opportunity,
+  ) {
+    const reasons: string[] = [];
+
+    if (opportunity.priority_score >= 80) {
+      reasons.push("high priority");
+    }
+
+    if (opportunity.probability_score >= 70) {
+      reasons.push("strong recovery probability");
+    }
+
+    if (Number(opportunity.estimated_value) >= 5000) {
+      reasons.push("meaningful revenue at risk");
+    }
+
+    if (opportunity.type === "missed_call") {
+      reasons.push("time-sensitive missed call");
+    }
+
+    if (opportunity.type === "old_estimate") {
+      reasons.push("existing buying intent");
+    }
+
+    if (opportunity.type === "unanswered_inquiry") {
+      reasons.push("customer already initiated contact");
+    }
+
+    if (reasons.length === 0) {
+      return "This opportunity has enough recovery potential to justify proactive follow-up.";
+    }
+
+    if (reasons.length === 1) {
+      return `Revora identified ${reasons[0]} as the primary recovery signal.`;
+    }
+
+    return `Revora detected ${reasons
+      .slice(0, 3)
+      .join(", ")}.`;
+  }
+
+  function openFollowUp(
+    opportunity: Opportunity,
+    channel?: RecommendedChannel,
+  ) {
+    const customer = getCustomer(
+      opportunity.customer_id,
+    );
+
+    const recommendedChannel =
+      channel ??
+      getRecommendedChannel(
+        opportunity,
+        customer,
+      );
+
+    setFollowUpOpportunity(opportunity);
+    setFollowUpChannel(recommendedChannel);
+
+    const aiRecommendation = getRecommendation(opportunity);
+
+    setFollowUpMessage(
+      recommendedChannel === "email"
+        ? `Hi ${
+            customer?.name || "there"
+          },
+
+I wanted to follow up regarding your recent request. ${aiRecommendation}
+
+We would be happy to help with the next step and answer any questions you may have.
+
+Please let us know a convenient time to connect.
+
+Best regards`
+        : `Call ${
+            customer?.name || "customer"
+          } and discuss the opportunity. ${aiRecommendation}`,
+    );
+
+    setFollowUpDate("");
+  }
+
+  async function createFollowUp() {
+    if (!followUpOpportunity) {
+      return;
+    }
+
+    if (!followUpDate) {
+      alert(
+        "Please select a follow-up date and time.",
+      );
+      return;
+    }
+
+    if (!followUpMessage.trim()) {
+      alert(
+        "Please enter a follow-up message.",
+      );
+      return;
+    }
+
+    setFollowUpSaving(true);
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) {
+        throw userError;
+      }
+
+      if (!user) {
+        alert("You are not logged in.");
+        return;
+      }
+
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("profiles")
+        .select("business_id")
+        .eq("id", user.id)
+        .single();
+
+      if (
+        profileError ||
+        !profile?.business_id
+      ) {
+        alert(
+          `Profile error: ${
+            profileError?.message ||
+            "Business not found."
+          }`,
+        );
+        return;
+      }
+
+      const scheduledDate = new Date(
+        followUpDate,
+      );
+
+      if (
+        Number.isNaN(
+          scheduledDate.getTime(),
+        )
+      ) {
+        alert(
+          "Please select a valid date and time.",
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("follow_ups")
+        .insert({
+          business_id:
+            profile.business_id,
+          opportunity_id:
+            followUpOpportunity.id,
+          channel: followUpChannel,
+          message:
+            followUpMessage.trim(),
+          scheduled_at:
+            scheduledDate.toISOString(),
+          status: "pending",
+        });
+
+      if (error) {
+        console.error(
+          "FOLLOW-UP ERROR:",
+          error,
+        );
+
+        alert(
+          `Could not schedule follow-up: ${error.message}`,
+        );
+
+        return;
+      }
+
+      setFollowUpOpportunity(null);
+      setFollowUpMessage("");
+      setFollowUpDate("");
+      setFollowUpChannel("email");
+
+      alert(
+        "Follow-up scheduled successfully!",
+      );
+    } catch (err) {
+      console.error(
+        "Unexpected follow-up error:",
+        err,
+      );
+
+      alert(
+        `Unexpected error: ${
+          err instanceof Error
+            ? err.message
+            : String(err)
+        }`,
+      );
+    } finally {
+      setFollowUpSaving(false);
+    }
+  }
+
+  function viewOpportunity() {
+    window.location.href =
+      "/opportunities";
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#07090d] text-white">
+        <div className="flex min-h-screen">
+          <Sidebar />
+
+          <main className="flex-1 p-8">
+            <div className="flex min-h-[400px] items-center justify-center">
+              <div className="text-center">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
+
+                <p className="mt-4 text-sm text-gray-500">
+                  Loading AI Recovery...
+                </p>
+              </div>
+            </div>
+          </main>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#07090d] text-white">
       <div className="flex min-h-screen">
-        {/* SIDEBAR */}
-        <aside className="hidden w-[250px] shrink-0 border-r border-white/10 bg-[#0a0d12] p-6 lg:block">
-          <div className="mb-10">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white font-black text-black">
-                R
-              </div>
 
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">
-                  REVORA
-                </h1>
+        {/* SHARED SIDEBAR */}
+        <Sidebar />
 
-                <p className="text-xs text-gray-500">
-                  Revenue Recovery
-                </p>
-              </div>
-            </div>
-          </div>
+        {/* MAIN CONTENT */}
+        <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-12">
+          <div className="mx-auto max-w-7xl">
 
-          <nav className="space-y-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/";
-              }}
-              className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Dashboard
-            </button>
+            {/* HEADER */}
+            <div className="mb-8">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
+                    REVORA · AI ENGINE
+                  </p>
 
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/opportunities";
-              }}
-              className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Opportunities
-            </button>
+                  <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+                    Revenue Recovery Intelligence
+                  </h1>
 
-            <button
-              type="button"
-              className="w-full rounded-xl bg-white px-4 py-3 text-left text-sm font-medium text-black"
-            >
-              AI Recovery
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/follow-ups";
-              }}
-              className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Follow-Ups
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/roi";
-              }}
-              className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              ROI
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                window.location.href = "/settings";
-              }}
-              className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Settings
-            </button>
-          </nav>
-
-          {/* WORKSPACE */}
-          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">
-              WORKSPACE
-            </p>
-
-            <div className="mt-4 flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                {business
-                  ? getInitials(business.name)
-                  : "RV"}
-              </div>
-
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">
-                  {business?.name || "Loading..."}
-                </p>
-
-                <p className="truncate text-xs text-gray-500">
-                  Business workspace
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* SYSTEM */}
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-500">
-                System
-              </span>
-
-              <span className="flex items-center gap-1.5 text-xs text-emerald-500">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Operational
-              </span>
-            </div>
-          </div>
-        </aside>
-
-        {/* MAIN */}
-        <section className="min-w-0 flex-1">
-          {/* HEADER */}
-          <header className="flex h-[72px] items-center justify-between border-b border-white/10 bg-[#07090d] px-5 sm:px-6 lg:px-10">
-            <div>
-              <p className="text-sm font-medium text-gray-500">
-                AI Recovery
-              </p>
-            </div>
-
-            <div
-              title={userEmail}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white"
-            >
-              {business
-                ? getInitials(business.name)
-                : "RV"}
-            </div>
-          </header>
-
-          {/* CONTENT */}
-          <div className="mx-auto max-w-[1450px] px-5 py-8 sm:px-6 lg:px-10 lg:py-10">
-            {loading ? (
-              <div className="flex min-h-[500px] items-center justify-center">
-                <div className="text-center">
-                  <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
-
-                  <p className="text-sm text-gray-500">
-                    Loading AI Recovery...
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
+                    Revora ranks active opportunities by recovery potential and tells your team what to do next.
                   </p>
                 </div>
+
+                {opportunities.length > 0 && (
+                  <div className="rounded-2xl border border-white/10 bg-[#0c1016] px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
+                        ✦
+                      </span>
+
+                      <div>
+                        <p className="text-xs font-semibold text-white">
+                          Recovery engine active
+                        </p>
+
+                        <p className="mt-0.5 text-[11px] text-gray-500">
+                          Ranking{" "}
+                          {opportunities.length}{" "}
+                          active{" "}
+                          {opportunities.length ===
+                          1
+                            ? "opportunity"
+                            : "opportunities"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : error ? (
-              <div className="rounded-3xl border border-red-500/20 bg-red-500/5 p-8">
+            </div>
+
+            {/* ERROR */}
+            {error && (
+              <div className="mb-8 rounded-3xl border border-red-500/20 bg-red-500/5 p-6">
                 <p className="text-xs font-semibold uppercase tracking-wider text-red-500">
                   AI Recovery Error
                 </p>
 
-                <h2 className="mt-2 text-xl font-semibold">
-                  Could not load AI Recovery
-                </h2>
-
-                <p className="mt-3 text-sm text-gray-500">
+                <p className="mt-2 text-sm text-gray-400">
                   {error}
                 </p>
 
                 <button
+                  onClick={loadData}
                   type="button"
-                  onClick={() => {
-                    window.location.reload();
-                  }}
-                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
+                  className="mt-5 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
                 >
                   Try again
                 </button>
               </div>
-            ) : (
-              <>
-                {/* HERO */}
-                <div className="mb-10">
-                  <div className="mb-4 flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-indigo-500" />
+            )}
 
-                    <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                      AI RECOVERY ENGINE
-                    </p>
+            {/* METRICS */}
+            <div className="mb-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <MetricCard
+                label="Recoverable Revenue"
+                value={formatCurrency(
+                  recoverableRevenue,
+                )}
+                description="Active revenue still at risk"
+                accent="indigo"
+              />
+
+              <MetricCard
+                label="Expected Recovery"
+                value={formatCurrency(
+                  expectedRecovery,
+                )}
+                description="Probability-weighted value"
+                accent="emerald"
+              />
+
+              <MetricCard
+                label="Active Opportunities"
+                value={opportunities.length.toString()}
+                description="Require recovery action"
+                accent="slate"
+              />
+
+              <MetricCard
+                label="High Priority"
+                value={highPriority.toString()}
+                description={`Average probability ${averageProbability}%`}
+                accent="amber"
+              />
+            </div>
+
+            {/* AI EXPLANATION */}
+            {opportunities.length > 0 && (
+              <div className="mb-10 rounded-3xl border border-indigo-500/20 bg-gradient-to-r from-indigo-500/[0.08] via-[#0c1016] to-[#0c1016] p-6">
+                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 text-lg text-indigo-400">
+                      ✦
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        Revora decision engine
+                      </p>
+
+                      <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-500">
+                        Each opportunity is scored using revenue value, priority, customer intent, and recovery probability. Higher scores move to the top of the queue.
+                      </p>
+                    </div>
                   </div>
 
-                  <h2 className="max-w-4xl text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl lg:text-6xl">
-                    Turn missed revenue
-                    <br />
-                    into recovered revenue.
+                  <div className="shrink-0 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                      TOP RECOVERY SCORE
+                    </p>
+
+                    <p className="mt-1 text-2xl font-semibold text-indigo-400">
+                      {opportunities[0]?.recoveryScore ??
+                        0}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SECTION HEADER */}
+            <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-semibold">
+                    Recommended Recovery Actions
                   </h2>
 
-                  <p className="mt-5 max-w-2xl text-sm leading-6 text-gray-500">
-                    AI-powered recovery recommendations for{" "}
-                    {business?.name || "your business"}.
-                  </p>
-                </div>
-
-                {/* METRICS */}
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Metric
-                    title="Recoverable Revenue"
-                    value={formatMoney(potentialRevenue)}
-                    subtitle={`${opportunities.length} active opportunities`}
-                  />
-
-                  <Metric
-                    title="High Priority"
-                    value={String(highPriority)}
-                    subtitle="Priority score 80+"
-                  />
-
-                  <Metric
-                    title="Avg. Probability"
-                    value={`${averageProbability}%`}
-                    subtitle="AI recovery probability"
-                  />
-                </div>
-
-                {/* AI ENGINE */}
-                <div className="mt-6 rounded-3xl border border-white/10 bg-[#0c1016]">
-                  <div className="border-b border-white/10 p-6">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                      AI RECOMMENDATIONS
-                    </p>
-
-                    <h3 className="mt-2 text-xl font-semibold tracking-tight">
-                      Best opportunities to recover
-                    </h3>
-
-                    <p className="mt-1 text-xs text-gray-500">
-                      Prioritized using opportunity value,
-                      priority and recovery probability.
-                    </p>
-                  </div>
-
-                  {opportunities.length === 0 ? (
-                    <div className="p-10 text-center">
-                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/10 text-xl">
-                        AI
-                      </div>
-
-                      <p className="mt-5 text-lg font-semibold">
-                        No recovery opportunities
-                      </p>
-
-                      <p className="mt-2 text-sm text-gray-500">
-                        Revora will show AI recovery recommendations
-                        when active opportunities are available.
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      {opportunities.map(
-                        (opportunity, index) => {
-                          const customerName =
-                            opportunity.customer?.name ||
-                            opportunity.title ||
-                            "Unknown customer";
-
-                          const recommendation =
-                            getRecoveryRecommendation(
-                              opportunity
-                            );
-
-                          return (
-                            <div
-                              key={opportunity.id}
-                              className={`p-6 transition hover:bg-white/[0.025] ${
-                                index !==
-                                opportunities.length - 1
-                                  ? "border-b border-white/10"
-                                  : ""
-                              }`}
-                            >
-                              {/* OPPORTUNITY HEADER */}
-                              <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                                <div className="flex min-w-0 items-center gap-4">
-                                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                                    {getInitials(
-                                      customerName
-                                    )}
-                                  </div>
-
-                                  <div className="min-w-0">
-                                    <h4 className="font-semibold">
-                                      {customerName}
-                                    </h4>
-
-                                    <p className="mt-1 text-sm text-gray-500">
-                                      {opportunity.type}
-                                    </p>
-
-                                    {opportunity.description && (
-                                      <p className="mt-2 max-w-xl text-sm leading-6 text-gray-400">
-                                        {
-                                          opportunity.description
-                                        }
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* STATS */}
-                                <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      VALUE
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold">
-                                      {formatMoney(
-                                        Number(
-                                          opportunity.estimated_value
-                                        )
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      PRIORITY
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-emerald-500">
-                                      {
-                                        opportunity.priority_score
-                                      }
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      PROBABILITY
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-indigo-400">
-                                      {
-                                        opportunity.probability_score
-                                      }
-                                      %
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* AI RECOMMENDATION */}
-                              <div className="mt-6 rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5">
-                                <div className="flex items-center gap-3">
-                                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-xs font-bold text-white">
-                                    AI
-                                  </div>
-
-                                  <div>
-                                    <p className="text-sm font-semibold">
-                                      Recommended recovery action
-                                    </p>
-
-                                    <p className="text-xs text-gray-500">
-                                      {
-                                        recommendation.label
-                                      }
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <p className="mt-4 text-sm leading-6 text-gray-400">
-                                  {recommendation.text}
-                                </p>
-
-                                {/* ACTIONS */}
-                                <div className="mt-5 flex flex-wrap gap-3">
-                                  {opportunity.customer
-                                    ?.phone && (
-                                    <a
-                                      href={`tel:${opportunity.customer.phone}`}
-                                      className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
-                                    >
-                                      Call Customer
-                                    </a>
-                                  )}
-
-                                  {opportunity.customer
-                                    ?.email && (
-                                    <a
-                                      href={`mailto:${opportunity.customer.email}`}
-                                      className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-                                    >
-                                      Email Customer
-                                    </a>
-                                  )}
-
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      window.location.href =
-                                        "/opportunities";
-                                    }}
-                                    className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-                                  >
-                                    View Opportunity
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }
-                      )}
-                    </div>
+                  {opportunities.length > 0 && (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+                      AI RANKED
+                    </span>
                   )}
                 </div>
 
-                {/* FOOTER */}
-                <footer className="py-8 text-center text-xs text-gray-500">
-                  REVORA · AI Revenue Recovery Engine
-                </footer>
-              </>
+                <p className="mt-1 text-sm text-gray-500">
+                  Start at the top. Revora has already prioritized the highest-value recovery opportunities.
+                </p>
+              </div>
+
+              {opportunities.length > 0 && (
+                <span className="text-sm text-gray-500">
+                  {opportunities.length}{" "}
+                  {opportunities.length ===
+                  1
+                    ? "opportunity"
+                    : "opportunities"}
+                </span>
+              )}
+            </div>
+
+            {/* EMPTY STATE */}
+            {opportunities.length === 0 ? (
+              <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-12 text-center">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-indigo-500/20 bg-indigo-500/10 text-2xl text-indigo-400">
+                  ✦
+                </div>
+
+                <h2 className="mt-5 text-xl font-semibold">
+                  No recovery opportunities
+                </h2>
+
+                <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">
+                  New opportunities will appear here when Revora identifies recoverable revenue.
+                </p>
+
+                <Link
+                  href="/opportunities"
+                  className="mt-6 inline-flex rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-gray-300 transition hover:bg-white/10 hover:text-white"
+                >
+                  View Opportunities
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {opportunities.map(
+                  (opportunity, index) => {
+                    const customer =
+                      getCustomer(
+                        opportunity.customer_id,
+                      );
+
+                    const score =
+                      getScoreLabel(
+                        opportunity.recoveryScore ??
+                          0,
+                      );
+
+                    const recommendedChannel =
+                      getRecommendedChannel(
+                        opportunity,
+                        customer,
+                      );
+
+                    const expected = Number(
+                      opportunity.expectedRecovery ||
+                        0,
+                    );
+
+                    const value = Number(
+                      opportunity.estimated_value ||
+                        0,
+                    );
+
+                    const recoveryProbability =
+                      Number(
+                        opportunity.probability_score ||
+                          0,
+                      );
+
+                    return (
+                      <div
+                        key={opportunity.id}
+                        className={`rounded-3xl border bg-[#0c1016] p-6 transition hover:border-indigo-500/20 ${
+                          index === 0
+                            ? "border-indigo-500/20"
+                            : "border-white/10"
+                        }`}
+                      >
+                        {/* TOP ROW */}
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="flex min-w-0 items-start gap-4">
+                            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-indigo-500/10 text-sm font-bold text-indigo-400">
+                              {customer?.name
+                                ?.split(" ")
+                                .map(
+                                  (word) =>
+                                    word[0],
+                                )
+                                .join("")
+                                .slice(0, 2)
+                                .toUpperCase() ||
+                                "C"}
+
+                              {index === 0 && (
+                                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white">
+                                  1
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-xs font-semibold text-indigo-400">
+                                  Recovery Score{" "}
+                                  {
+                                    opportunity.recoveryScore
+                                  }
+                                </span>
+
+                                <span
+                                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${score.className}`}
+                                >
+                                  {score.label}
+                                </span>
+
+                                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs capitalize text-gray-400">
+                                  {opportunity.type.replaceAll(
+                                    "_",
+                                    " ",
+                                  )}
+                                </span>
+                              </div>
+
+                              <h3 className="text-lg font-semibold text-white">
+                                {customer?.name ||
+                                  opportunity.title}
+                              </h3>
+
+                              <p className="mt-1 text-sm text-gray-500">
+                                {opportunity.description ||
+                                  "Revenue recovery opportunity"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* EXPECTED RECOVERY */}
+                          <div className="shrink-0 rounded-2xl border border-white/10 bg-black/20 px-5 py-4 lg:min-w-[190px]">
+                            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                              EXPECTED RECOVERY
+                            </p>
+
+                            <p className="mt-1 text-2xl font-semibold text-emerald-400">
+                              {formatCurrency(
+                                expected,
+                              )}
+                            </p>
+
+                            <p className="mt-1 text-xs text-gray-500">
+                              {
+                                recoveryProbability
+                              }
+                              % probability
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* AI INSIGHT GRID */}
+                        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/10 text-xs text-indigo-400">
+                                ✦
+                              </span>
+
+                              <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-500">
+                                WHY THIS MATTERS
+                              </p>
+                            </div>
+
+                            <p className="mt-3 text-sm leading-6 text-gray-400">
+                              {getWhyItMatters(
+                                opportunity,
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/[0.05] p-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-500/10 text-xs text-indigo-400">
+                                  →
+                                </span>
+
+                                <p className="text-[10px] font-semibold tracking-[0.14em] text-indigo-400">
+                                  RECOMMENDED ACTION
+                                </p>
+                              </div>
+
+                              <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[10px] font-semibold capitalize text-gray-400">
+                                {
+                                  recommendedChannel
+                                }
+                              </span>
+                            </div>
+
+                            <p className="mt-3 text-sm leading-6 text-gray-300">
+                              {getRecommendation(
+                                opportunity,
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* DATA STRIP */}
+                        <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-4">
+                          <ScoreItem
+                            label="Revenue at risk"
+                            value={formatCurrency(
+                              value,
+                            )}
+                          />
+
+                          <ScoreItem
+                            label="Priority"
+                            value={String(
+                              opportunity.priority_score,
+                            )}
+                          />
+
+                          <ScoreItem
+                            label="Intent"
+                            value={`${Number(
+                              opportunity.intent_score ||
+                                0,
+                            )}%`}
+                          />
+
+                          <ScoreItem
+                            label="Probability"
+                            value={`${recoveryProbability}%`}
+                          />
+                        </div>
+
+                        {/* ACTION BAR */}
+                        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openFollowUp(
+                                  opportunity,
+                                  "call",
+                                )
+                              }
+                              className={`rounded-xl px-5 py-2.5 text-xs font-semibold text-white transition ${
+                                recommendedChannel ===
+                                "call"
+                                  ? "bg-indigo-500 hover:bg-indigo-400"
+                                  : "border border-white/10 bg-white/5 hover:bg-white/10"
+                              }`}
+                            >
+                              Call
+
+                              {recommendedChannel ===
+                                "call" && (
+                                <span className="ml-2 opacity-70">
+                                  Recommended
+                                </span>
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openFollowUp(
+                                  opportunity,
+                                  "email",
+                                )
+                              }
+                              disabled={
+                                !customer?.email
+                              }
+                              className={`rounded-xl border border-white/10 px-5 py-2.5 text-xs font-semibold transition ${
+                                customer?.email
+                                  ? "bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
+                                  : "cursor-not-allowed bg-white/[0.02] text-gray-600"
+                              }`}
+                              title={
+                                customer?.email
+                                  ? "Schedule an email follow-up"
+                                  : "Customer has no email address"
+                              }
+                            >
+                              Email
+
+                              {recommendedChannel ===
+                                "email" && (
+                                <span className="ml-2 text-indigo-400">
+                                  Recommended
+                                </span>
+                              )}
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={
+                              viewOpportunity
+                            }
+                            className="rounded-xl border border-white/10 px-5 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
+                          >
+                            View Opportunity →
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
             )}
+
+            <footer className="py-10 text-center text-xs text-gray-600">
+              REVORA · Revenue Recovery Intelligence
+            </footer>
           </div>
-        </section>
+        </main>
       </div>
+
+      {/* FOLLOW-UP MODAL */}
+      {followUpOpportunity && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-5 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              setFollowUpOpportunity(null);
+            }
+          }}
+        >
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/10 bg-[#0c1016] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
+                  REVORA · RECOVERY ACTION
+                </p>
+
+                <h2 className="mt-2 text-xl font-semibold">
+                  Schedule Follow-Up
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Turn the AI recommendation into a scheduled recovery action.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setFollowUpOpportunity(null)
+                }
+                className="rounded-lg px-3 py-2 text-gray-500 transition hover:bg-white/5 hover:text-white"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* OPPORTUNITY SUMMARY */}
+            <div className="mt-6 rounded-2xl border border-indigo-500/20 bg-indigo-500/[0.05] p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-white">
+                    {getCustomer(
+                      followUpOpportunity.customer_id,
+                    )?.name ||
+                      followUpOpportunity.title}
+                  </p>
+
+                  <p className="mt-1 text-xs capitalize text-gray-500">
+                    {followUpOpportunity.type.replaceAll(
+                      "_",
+                      " ",
+                    )}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-xs text-gray-500">
+                    Expected
+                  </p>
+
+                  <p className="text-sm font-semibold text-emerald-400">
+                    {formatCurrency(
+                      followUpOpportunity.expectedRecovery ??
+                        0,
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-5">
+              {/* CUSTOMER */}
+              <div>
+                <p className="mb-2 text-xs font-semibold tracking-wider text-gray-500">
+                  CUSTOMER
+                </p>
+
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-gray-300">
+                  {getCustomer(
+                    followUpOpportunity.customer_id,
+                  )?.name ||
+                    "Unknown Customer"}
+                </div>
+              </div>
+
+              {/* CHANNEL */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold tracking-wider text-gray-500">
+                    CHANNEL
+                  </p>
+
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">
+                    AI recommended
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFollowUpChannel(
+                        "call",
+                      )
+                    }
+                    className={`rounded-xl border px-4 py-3 text-left transition ${
+                      followUpChannel ===
+                      "call"
+                        ? "border-indigo-500/40 bg-indigo-500/10 text-white"
+                        : "border-white/10 bg-white/[0.02] text-gray-400 hover:bg-white/5"
+                    }`}
+                  >
+                    <p className="text-sm font-semibold">
+                      Call
+                    </p>
+
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Direct conversation
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFollowUpChannel(
+                        "email",
+                      )
+                    }
+                    disabled={
+                      !getCustomer(
+                        followUpOpportunity.customer_id,
+                      )?.email
+                    }
+                    className={`rounded-xl border px-4 py-3 text-left transition ${
+                      followUpChannel ===
+                      "email"
+                        ? "border-indigo-500/40 bg-indigo-500/10 text-white"
+                        : "border-white/10 bg-white/[0.02] text-gray-400 hover:bg-white/5"
+                    } ${
+                      !getCustomer(
+                        followUpOpportunity.customer_id,
+                      )?.email
+                        ? "cursor-not-allowed opacity-40"
+                        : ""
+                    }`}
+                  >
+                    <p className="text-sm font-semibold">
+                      Email
+                    </p>
+
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Personalized outreach
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* DATE */}
+              <div>
+                <p className="mb-2 text-xs font-semibold tracking-wider text-gray-500">
+                  SCHEDULED AT
+                </p>
+
+                <input
+                  type="datetime-local"
+                  value={followUpDate}
+                  onChange={(event) =>
+                    setFollowUpDate(
+                      event.target.value,
+                    )
+                  }
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none [color-scheme:dark] focus:border-indigo-500"
+                />
+              </div>
+
+              {/* MESSAGE */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold tracking-wider text-gray-500">
+                    RECOVERY MESSAGE
+                  </p>
+
+                  <span className="text-[10px] text-gray-600">
+                    Editable
+                  </span>
+                </div>
+
+                <textarea
+                  value={followUpMessage}
+                  onChange={(event) =>
+                    setFollowUpMessage(
+                      event.target.value,
+                    )
+                  }
+                  rows={6}
+                  className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* SAVE */}
+              <button
+                type="button"
+                onClick={createFollowUp}
+                disabled={followUpSaving}
+                className="w-full rounded-xl bg-indigo-500 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {followUpSaving
+                  ? "Scheduling..."
+                  : `Schedule ${
+                      followUpChannel ===
+                      "call"
+                        ? "Call"
+                        : "Email"
+                    } Follow-Up`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
-function Metric({
-  title,
+function MetricCard({
+  label,
   value,
-  subtitle,
+  description,
+  accent,
 }: {
-  title: string;
+  label: string;
   value: string;
-  subtitle: string;
+  description: string;
+  accent:
+    | "indigo"
+    | "emerald"
+    | "amber"
+    | "slate";
 }) {
+  const accentClasses = {
+    indigo:
+      "bg-indigo-500/10 text-indigo-400",
+    emerald:
+      "bg-emerald-500/10 text-emerald-400",
+    amber:
+      "bg-amber-500/10 text-amber-400",
+    slate:
+      "bg-white/5 text-gray-400",
+  };
+
   return (
-    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/20">
+    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/15">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
-          {title}
+        <p className="text-sm font-medium text-gray-400">
+          {label}
         </p>
 
-        <span className="h-2 w-2 rounded-full bg-indigo-500" />
+        <span
+          className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs ${accentClasses[accent]}`}
+        >
+          ✦
+        </span>
       </div>
 
-      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em]">
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-white">
         {value}
       </p>
 
-      <p className="mt-2 text-xs font-medium text-emerald-500">
-        {subtitle}
+      <p className="mt-1 text-xs text-gray-500">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function ScoreItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="bg-[#0c1016] px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-600">
+        {label}
+      </p>
+
+      <p className="mt-1 text-sm font-semibold text-gray-300">
+        {value}
       </p>
     </div>
   );

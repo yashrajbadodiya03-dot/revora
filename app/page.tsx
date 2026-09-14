@@ -2,697 +2,282 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "../lib/supabase";
+import Sidebar from "@/components/Sidebar";
+import { createClient } from "@/lib/supabase";
+
+type OpportunityStatus =
+  | "new"
+  | "contacted"
+  | "qualified"
+  | "recovered"
+  | "closed"
+  | "lost";
+
+type OpportunityType =
+  | "missed_call"
+  | "unanswered_inquiry"
+  | "old_estimate"
+  | "no_follow_up";
 
 type Opportunity = {
   id: string;
   title: string;
-  description: string | null;
-  type: string;
-  estimated_value: number;
-  priority_score: number;
-  probability_score: number;
-  status: string;
-  customer?: {
-    name: string;
-    email: string | null;
-    phone: string | null;
-  } | null;
+  type: OpportunityType;
+  estimated_value: number | null;
+  priority_score: number | null;
+  probability_score: number | null;
+  status: OpportunityStatus;
+  created_at: string;
 };
 
-type Business = {
-  id: string;
-  name: string;
+type RevenueEvent = {
+  amount: number | null;
 };
 
-export default function Home() {
-  const supabase = useMemo(() => createClient(), []);
+type DashboardStats = {
+  potentialRevenue: number;
+  activeOpportunities: number;
+  highPriority: number;
+  recoveredRevenue: number;
+  recoveryRate: number;
+};
 
-  const [business, setBusiness] = useState<Business | null>(null);
-  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [userEmail, setUserEmail] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+const emptyStats: DashboardStats = {
+  potentialRevenue: 0,
+  activeOpportunities: 0,
+  highPriority: 0,
+  recoveredRevenue: 0,
+  recoveryRate: 0,
+};
 
-  useEffect(() => {
-    async function loadDashboard() {
-      setLoading(true);
-      setError("");
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
-      try {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
 
-        if (userError || !user) {
-          window.location.href = "/login";
-          return;
-        }
+  const date = new Date(value);
 
-        setUserEmail(user.email ?? "");
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
 
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("business_id")
-          .eq("id", user.id)
-          .single();
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
 
-        if (profileError) {
-          throw new Error(`Profile error: ${profileError.message}`);
-        }
-
-        if (!profile?.business_id) {
-          throw new Error(
-            "Your account is not connected to a business workspace yet."
-          );
-        }
-
-        const { data: businessData, error: businessError } = await supabase
-          .from("businesses")
-          .select("id, name")
-          .eq("id", profile.business_id)
-          .single();
-
-        if (businessError) {
-          throw new Error(`Business error: ${businessError.message}`);
-        }
-
-        setBusiness(businessData);
-
-        const {
-          data: opportunityData,
-          error: opportunityError,
-        } = await supabase
-          .from("opportunities")
-          .select(`
-            id,
-            title,
-            description,
-            type,
-            estimated_value,
-            priority_score,
-            probability_score,
-            status,
-            customer:customers(
-              name,
-              email,
-              phone
-            )
-          `)
-          .eq("business_id", profile.business_id)
-          .neq("status", "closed")
-          .order("priority_score", {
-            ascending: false,
-          });
-
-        if (opportunityError) {
-          throw new Error(
-            `Opportunities error: ${opportunityError.message}`
-          );
-        }
-
-        setOpportunities(
-          (opportunityData ?? []).map((opportunity) => ({
-            ...opportunity,
-            customer: Array.isArray(opportunity.customer)
-              ? opportunity.customer[0] ?? null
-              : opportunity.customer ?? null,
-          }))
-        );
-      } catch (err) {
-        console.error(err);
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Something went wrong while loading Dashboard."
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadDashboard();
-  }, [supabase]);
-
-  const formatMoney = (value: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(value);
-
-  const getInitials = (name: string) => {
-    const trimmed = name.trim();
-
-    if (!trimmed) {
-      return "RV";
-    }
-
-    const parts = trimmed.split(/\s+/);
-
-    if (parts.length === 1) {
-      return parts[0].slice(0, 2).toUpperCase();
-    }
-
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  };
-
-  const potentialRevenue = opportunities.reduce(
-    (total, opportunity) =>
-      total + Number(opportunity.estimated_value || 0),
-    0
+function isActiveOpportunity(opportunity: Opportunity) {
+  return !["recovered", "closed", "lost"].includes(
+    opportunity.status,
   );
-
-  const expectedRevenue = opportunities.reduce(
-    (total, opportunity) =>
-      total +
-      Number(opportunity.estimated_value || 0) *
-        (Number(opportunity.probability_score || 0) / 100),
-    0
-  );
-
-  const highPriority = opportunities.filter(
-    (opportunity) =>
-      Number(opportunity.priority_score || 0) >= 80
-  ).length;
-
-  const activeOpportunities = opportunities.filter(
-    (opportunity) =>
-      opportunity.status !== "recovered" &&
-      opportunity.status !== "lost" &&
-      opportunity.status !== "closed"
-  );
-
-  const activePipeline = activeOpportunities.reduce(
-    (total, opportunity) =>
-      total + Number(opportunity.estimated_value || 0),
-    0
-  );
-
-  return (
-    <main className="min-h-screen bg-[#07090d] text-white">
-      <div className="flex min-h-screen">
-
-        {/* SIDEBAR */}
-        <aside className="hidden lg:block w-[250px] shrink-0 border-r border-white/10 bg-[#0a0d12] p-6">
-
-          {/* LOGO */}
-          <div className="mb-10">
-            <div className="flex items-center gap-3">
-
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white font-black text-black">
-                R
-              </div>
-
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">
-                  REVORA
-                </h1>
-
-                <p className="text-xs text-gray-500">
-                  Revenue Recovery
-                </p>
-              </div>
-
-            </div>
-          </div>
-
-          {/* NAVIGATION */}
-          <nav className="space-y-1.5">
-
-            <Link
-              href="/"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              Dashboard
-            </Link>
-
-            <Link
-              href="/opportunities"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              Opportunities
-            </Link>
-
-            <Link
-              href="/ai-recovery"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              AI Recovery
-            </Link>
-
-            <Link
-              href="/follow-ups"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              Follow-Ups
-            </Link>
-
-            <Link
-              href="/roi"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              ROI
-            </Link>
-
-            <Link
-              href="/settings"
-              className="block rounded-xl px-4 py-3 text-sm font-medium text-gray-400 hover:bg-white/5 hover:text-white"
-            >
-              Settings
-            </Link>
-
-          </nav>
-
-          {/* WORKSPACE */}
-          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-
-            <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">
-              WORKSPACE
-            </p>
-
-            <div className="mt-4 flex items-center gap-3">
-
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                {business ? getInitials(business.name) : "RV"}
-              </div>
-
-              <div className="min-w-0">
-
-                <p className="truncate text-sm font-semibold">
-                  {business?.name || "Loading..."}
-                </p>
-
-                <p className="truncate text-xs text-gray-500">
-                  Business workspace
-                </p>
-
-              </div>
-
-            </div>
-          </div>
-
-          {/* LOGOUT */}
-          <button
-            type="button"
-            onClick={async () => {
-              await supabase.auth.signOut();
-              window.location.href = "/login";
-            }}
-            className="mt-4 w-full rounded-xl border border-white/10 px-4 py-3 text-left text-sm font-medium text-gray-400 hover:bg-red-500/10 hover:text-red-400"
-          >
-            Log out
-          </button>
-
-          {/* SYSTEM */}
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-
-            <div className="flex items-center justify-between">
-
-              <span className="text-xs text-gray-500">
-                System
-              </span>
-
-              <span className="flex items-center gap-1.5 text-xs text-emerald-500">
-
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-
-                Operational
-
-              </span>
-
-            </div>
-
-          </div>
-
-        </aside>
-
-        {/* MAIN */}
-        <section className="min-w-0 flex-1">
-
-          {/* HEADER */}
-          <header className="flex h-[72px] items-center justify-between border-b border-white/10 bg-[#07090d] px-5 sm:px-6 lg:px-10">
-
-            <p className="text-sm font-medium text-gray-500">
-              Dashboard
-            </p>
-
-            <div
-              title={userEmail}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white"
-            >
-              {business ? getInitials(business.name) : "RV"}
-            </div>
-
-          </header>
-
-          {/* CONTENT */}
-          <div className="mx-auto max-w-[1450px] px-5 py-8 sm:px-6 lg:px-10 lg:py-10">
-
-            {/* LOADING */}
-            {loading && (
-              <div className="flex min-h-[500px] items-center justify-center">
-
-                <div className="text-center">
-
-                  <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
-
-                  <p className="text-sm text-gray-500">
-                    Loading Dashboard...
-                  </p>
-
-                </div>
-
-              </div>
-            )}
-
-            {/* ERROR */}
-            {!loading && error && (
-              <div className="rounded-3xl border border-red-500/20 bg-red-500/5 p-8">
-
-                <p className="text-xs font-semibold uppercase tracking-wider text-red-500">
-                  Dashboard Error
-                </p>
-
-                <h2 className="mt-2 text-xl font-semibold">
-                  Could not load Dashboard
-                </h2>
-
-                <p className="mt-3 text-sm text-gray-500">
-                  {error}
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => window.location.reload()}
-                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
-                >
-                  Try again
-                </button>
-
-              </div>
-            )}
-
-            {/* DASHBOARD */}
-            {!loading && !error && (
-              <>
-
-                {/* HERO */}
-                <div className="mb-10">
-
-                  <div className="mb-4 flex items-center gap-2">
-
-                    <span className="h-2 w-2 rounded-full bg-indigo-500" />
-
-                    <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                      REVENUE RECOVERY
-                    </p>
-
-                  </div>
-
-                  <h2 className="max-w-4xl text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl lg:text-6xl">
-                    Recover revenue
-                    <br />
-                    you are leaving behind.
-                  </h2>
-
-                  <p className="mt-5 max-w-2xl text-sm leading-6 text-gray-500">
-                    Revenue recovery intelligence for{" "}
-                    {business?.name || "your business"}.
-                  </p>
-
-                </div>
-
-                {/* METRICS */}
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
-                  <Metric
-                    title="Potential Revenue"
-                    value={formatMoney(potentialRevenue)}
-                    subtitle={`${opportunities.length} total opportunities`}
-                  />
-
-                  <Metric
-                    title="Expected Revenue"
-                    value={formatMoney(expectedRevenue)}
-                    subtitle="Probability-weighted pipeline"
-                  />
-
-                  <Metric
-                    title="High Priority"
-                    value={String(highPriority)}
-                    subtitle="Priority score 80+"
-                  />
-
-                  <Metric
-                    title="Active Pipeline"
-                    value={formatMoney(activePipeline)}
-                    subtitle={`${activeOpportunities.length} active opportunities`}
-                  />
-
-                </div>
-
-                {/* OPPORTUNITIES */}
-                <div className="mt-8 rounded-3xl border border-white/10 bg-[#0c1016] p-6 sm:p-8">
-
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
-                    <div>
-
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                        RECOVERY PIPELINE
-                      </p>
-
-                      <h3 className="mt-2 text-2xl font-semibold">
-                        Revenue opportunities
-                      </h3>
-
-                      <p className="mt-1 text-sm text-gray-500">
-                        Prioritized opportunities that need attention.
-                      </p>
-
-                    </div>
-
-                    <Link
-                      href="/opportunities"
-                      className="rounded-xl border border-white/10 px-4 py-2 text-xs font-medium text-gray-300 transition hover:bg-white/5"
-                    >
-                      View all opportunities →
-                    </Link>
-
-                  </div>
-
-                  {opportunities.length === 0 ? (
-
-                    <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center">
-
-                      <p className="text-sm text-gray-500">
-                        No revenue opportunities found.
-                      </p>
-
-                    </div>
-
-                  ) : (
-
-                    <div className="mt-8 space-y-4">
-
-                      {opportunities
-                        .slice(0, 5)
-                        .map((opportunity) => {
-
-                          const customerName =
-                            opportunity.customer?.name ||
-                            "Unknown customer";
-
-                          return (
-                            <div
-                              key={opportunity.id}
-                              className="rounded-2xl border border-white/10 bg-white/[0.02] p-5"
-                            >
-
-                              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-
-                                <div className="min-w-0">
-
-                                  <div className="flex items-center gap-3">
-
-                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-xs font-bold text-indigo-400">
-                                      {getInitials(customerName)}
-                                    </div>
-
-                                    <div className="min-w-0">
-
-                                      <h4 className="truncate text-base font-semibold">
-                                        {customerName}
-                                      </h4>
-
-                                      <p className="text-xs text-gray-500">
-                                        {opportunity.type || "Opportunity"}
-                                      </p>
-
-                                    </div>
-
-                                  </div>
-
-                                  {opportunity.description && (
-                                    <p className="mt-4 max-w-2xl text-sm leading-6 text-gray-500">
-                                      {opportunity.description}
-                                    </p>
-                                  )}
-
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
-
-                                  <div>
-
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      VALUE
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold">
-                                      {formatMoney(
-                                        Number(
-                                          opportunity.estimated_value || 0
-                                        )
-                                      )}
-                                    </p>
-
-                                  </div>
-
-                                  <div>
-
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      PRIORITY
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-emerald-500">
-                                      {opportunity.priority_score}
-                                    </p>
-
-                                  </div>
-
-                                  <div>
-
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      PROBABILITY
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-indigo-400">
-                                      {opportunity.probability_score}%
-                                    </p>
-
-                                  </div>
-
-                                </div>
-
-                              </div>
-
-                              <div className="mt-5 flex flex-wrap items-center gap-3">
-
-                                <span className="rounded-lg bg-white/5 px-3 py-1.5 text-xs text-gray-400">
-                                  {opportunity.status}
-                                </span>
-
-                                {opportunity.customer?.email && (
-                                  <a
-                                    href={`mailto:${opportunity.customer.email}`}
-                                    className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-                                  >
-                                    Email Customer
-                                  </a>
-                                )}
-
-                                <Link
-                                  href="/opportunities"
-                                  className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
-                                >
-                                  View Opportunity
-                                </Link>
-
-                              </div>
-
-                            </div>
-                          );
-                        })}
-
-                    </div>
-                  )}
-
-                </div>
-
-                {/* QUICK ACTIONS */}
-                <div className="mt-8 grid gap-4 md:grid-cols-3">
-
-                  <QuickAction
-                    title="AI Recovery"
-                    description="Find the best opportunities to recover."
-                    href="/ai-recovery"
-                  />
-
-                  <QuickAction
-                    title="Follow-Ups"
-                    description="See customers that need another touch."
-                    href="/follow-ups"
-                  />
-
-                  <QuickAction
-                    title="ROI Intelligence"
-                    description="Measure your potential recovered revenue."
-                    href="/roi"
-                  />
-
-                </div>
-
-                {/* FOOTER */}
-                <footer className="py-8 text-center text-xs text-gray-500">
-                  REVORA · Revenue Recovery Engine
-                </footer>
-
-              </>
-            )}
-
-          </div>
-
-        </section>
-
-      </div>
-    </main>
-  );
+}
+
+function typeLabel(type: OpportunityType) {
+  switch (type) {
+    case "missed_call":
+      return "Missed Call";
+    case "unanswered_inquiry":
+      return "Unanswered Inquiry";
+    case "old_estimate":
+      return "Old Estimate";
+    case "no_follow_up":
+      return "No Follow-Up";
+    default:
+      return type;
+  }
+}
+
+function statusLabel(status: OpportunityStatus) {
+  switch (status) {
+    case "new":
+      return "New";
+    case "contacted":
+      return "Contacted";
+    case "qualified":
+      return "Qualified";
+    case "recovered":
+      return "Recovered";
+    case "closed":
+      return "Closed";
+    case "lost":
+      return "Lost";
+    default:
+      return status;
+  }
+}
+
+function statusClass(status: OpportunityStatus) {
+  switch (status) {
+    case "new":
+      return "border-indigo-500/20 bg-indigo-500/10 text-indigo-300";
+    case "contacted":
+      return "border-sky-500/20 bg-sky-500/10 text-sky-300";
+    case "qualified":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+    case "recovered":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+    case "closed":
+      return "border-slate-500/20 bg-slate-500/10 text-slate-300";
+    case "lost":
+      return "border-rose-500/20 bg-rose-500/10 text-rose-300";
+    default:
+      return "border-white/10 bg-white/5 text-gray-400";
+  }
+}
+
+function priorityClass(priority: number) {
+  if (priority >= 80) return "text-rose-400";
+  if (priority >= 75) return "text-amber-400";
+  return "text-gray-400";
 }
 
 function Metric({
   title,
   value,
   subtitle,
+  success = false,
 }: {
   title: string;
   value: string;
   subtitle: string;
+  success?: boolean;
 }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/20">
-
+    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-5 transition hover:border-white/15 sm:p-6">
       <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">{title}</p>
 
-        <p className="text-sm text-gray-500">
-          {title}
-        </p>
-
-        <span className="h-2 w-2 rounded-full bg-indigo-500" />
-
+        <span
+          className={`h-2 w-2 rounded-full ${
+            success ? "bg-emerald-500" : "bg-indigo-500"
+          }`}
+        />
       </div>
 
-      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em]">
+      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em] text-white">
         {value}
       </p>
 
-      <p className="mt-2 text-xs font-medium text-emerald-500">
+      <p
+        className={`mt-2 text-xs font-medium ${
+          success ? "text-emerald-500" : "text-gray-500"
+        }`}
+      >
         {subtitle}
       </p>
+    </div>
+  );
+}
 
+function OpportunityCard({
+  opportunity,
+}: {
+  opportunity: Opportunity;
+}) {
+  const priority = Number(opportunity.priority_score || 0);
+  const probability = Number(opportunity.probability_score || 0);
+  const value = Number(opportunity.estimated_value || 0);
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 transition hover:border-white/15">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-sm font-bold text-indigo-400">
+              !
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="min-w-0 break-words text-base font-semibold text-white">
+                  {opportunity.title}
+                </h3>
+
+                <span className="rounded-md bg-white/5 px-2 py-1 text-[10px] capitalize text-gray-500">
+                  {typeLabel(opportunity.type)}
+                </span>
+
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-medium ${statusClass(
+                    opportunity.status,
+                  )}`}
+                >
+                  {statusLabel(opportunity.status)}
+                </span>
+              </div>
+
+              <p className="mt-1 text-xs text-gray-500">
+                Highest-priority active recovery opportunity
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 lg:min-w-[430px] lg:gap-6">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              VALUE
+            </p>
+
+            <p className="mt-1 break-words text-lg font-semibold text-white">
+              {formatMoney(value)}
+            </p>
+
+            <p className="mt-1 text-[10px] text-gray-600">
+              Potential value
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              PRIORITY
+            </p>
+
+            <p
+              className={`mt-1 text-lg font-semibold ${priorityClass(
+                priority,
+              )}`}
+            >
+              {priority}
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              PROBABILITY
+            </p>
+
+            <p className="mt-1 text-lg font-semibold text-indigo-400">
+              {probability}%
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-white/5 pt-5">
+        <span className="text-xs text-gray-600">
+          Created {formatDate(opportunity.created_at)}
+        </span>
+
+        <span className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-2.5 text-xs font-semibold text-indigo-300">
+          Score {priority}
+        </span>
+
+        <Link
+          href="/opportunities"
+          className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+        >
+          View Opportunity
+        </Link>
+      </div>
     </div>
   );
 }
@@ -709,25 +294,445 @@ function QuickAction({
   return (
     <Link
       href={href}
-      className="block rounded-3xl border border-white/10 bg-[#0c1016] p-6 text-left transition hover:border-indigo-500/40 hover:bg-white/[0.03]"
+      className="block rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-indigo-500/30 hover:bg-white/[0.03]"
     >
-
       <div className="flex items-center justify-between">
-
-        <h3 className="text-base font-semibold">
+        <h3 className="text-base font-semibold text-white">
           {title}
         </h3>
 
-        <span className="text-indigo-400">
-          →
-        </span>
-
+        <span className="text-indigo-400">→</span>
       </div>
 
       <p className="mt-2 text-sm leading-6 text-gray-500">
         {description}
       </p>
-
     </Link>
+  );
+}
+
+export default function DashboardPage() {
+  const supabase = useMemo(() => createClient(), []);
+
+  const [stats, setStats] =
+    useState<DashboardStats>(emptyStats);
+
+  const [activeOpportunities, setActiveOpportunities] =
+    useState<Opportunity[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function loadDashboard() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) {
+        throw userError;
+      }
+
+      if (!user) {
+        throw new Error(
+          "You must be signed in to view the dashboard.",
+        );
+      }
+
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("profiles")
+          .select("business_id")
+          .eq("id", user.id)
+          .maybeSingle();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      if (!profile?.business_id) {
+        throw new Error(
+          "No business is associated with your account.",
+        );
+      }
+
+      const [
+        {
+          data: opportunityData,
+          error: opportunityError,
+        },
+        {
+          data: revenueData,
+          error: revenueError,
+        },
+      ] = await Promise.all([
+        supabase
+          .from("opportunities")
+          .select(
+            `
+              id,
+              title,
+              type,
+              estimated_value,
+              priority_score,
+              probability_score,
+              status,
+              created_at
+            `,
+          )
+          .eq("business_id", profile.business_id)
+          .order("priority_score", {
+            ascending: false,
+            nullsFirst: false,
+          }),
+
+        supabase
+          .from("revenue_events")
+          .select("amount")
+          .eq("business_id", profile.business_id),
+      ]);
+
+      if (opportunityError) {
+        throw opportunityError;
+      }
+
+      if (revenueError) {
+        throw revenueError;
+      }
+
+      const opportunities =
+        (opportunityData || []) as Opportunity[];
+
+      const revenueRows =
+        (revenueData || []) as RevenueEvent[];
+
+      const activeRows =
+        opportunities.filter(isActiveOpportunity);
+
+      const potentialRevenue = activeRows.reduce(
+        (sum, opportunity) =>
+          sum +
+          Number(opportunity.estimated_value || 0),
+        0,
+      );
+
+      const highPriority = activeRows.filter(
+        (opportunity) =>
+          Number(opportunity.priority_score || 0) >= 75,
+      ).length;
+
+      const recoveredRevenue = revenueRows.reduce(
+        (sum, event) =>
+          sum + Number(event.amount || 0),
+        0,
+      );
+
+      const totalIdentifiedRevenue =
+        potentialRevenue + recoveredRevenue;
+
+      const recoveryRate =
+        totalIdentifiedRevenue > 0
+          ? (recoveredRevenue /
+              totalIdentifiedRevenue) *
+            100
+          : 0;
+
+      setStats({
+        potentialRevenue,
+        activeOpportunities: activeRows.length,
+        highPriority,
+        recoveredRevenue,
+        recoveryRate,
+      });
+
+      setActiveOpportunities(activeRows);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load dashboard.",
+      );
+
+      setStats(emptyStats);
+      setActiveOpportunities([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadDashboard();
+  }, []);
+
+  return (
+    <main className="min-h-screen w-full overflow-x-hidden bg-[#07090d] text-white">
+      <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)]">
+        {/* Desktop sidebar slot.
+            The actual sidebar is fixed, while this 250px column
+            keeps the dashboard content in the correct position. */}
+        <div className="relative hidden lg:block">
+          <Sidebar />
+        </div>
+
+        {/* Mobile sidebar/header */}
+        <div className="lg:hidden">
+          <Sidebar />
+        </div>
+
+        <section className="min-w-0 w-full">
+  <div className="w-full px-4 py-6 sm:px-7 sm:py-8 lg:px-8 xl:px-10">
+            <header className="flex flex-col gap-6 border-b border-white/10 pb-8 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
+                  EXECUTIVE INTELLIGENCE
+                </p>
+
+                <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+                  Executive Dashboard
+                </h1>
+
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
+                  Revenue opportunities that need action.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href="/opportunities"
+                  className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+                >
+                  View Opportunities
+                </Link>
+              </div>
+            </header>
+
+            {error && (
+              <div className="mt-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 px-5 py-4 text-sm text-rose-300">
+                {error}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="mt-8 rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
+                <p className="text-sm text-gray-500">
+                  Loading dashboard...
+                </p>
+              </div>
+            ) : (
+              <>
+                <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <Metric
+                    title="Potential Revenue"
+                    value={formatMoney(
+                      stats.potentialRevenue,
+                    )}
+                    subtitle={`${stats.activeOpportunities} active ${
+                      stats.activeOpportunities === 1
+                        ? "opportunity"
+                        : "opportunities"
+                    }`}
+                  />
+
+                  <Metric
+                    title="Active Opportunities"
+                    value={String(
+                      stats.activeOpportunities,
+                    )}
+                    subtitle={
+                      stats.activeOpportunities === 1
+                        ? "Requires recovery action"
+                        : "Require recovery action"
+                    }
+                  />
+
+                  <Metric
+                    title="Recovered Revenue"
+                    value={formatMoney(
+                      stats.recoveredRevenue,
+                    )}
+                    subtitle={`${stats.recoveryRate.toFixed(
+                      1,
+                    )}% recovery rate`}
+                    success
+                  />
+
+                  <Metric
+                    title="High Priority"
+                    value={String(stats.highPriority)}
+                    subtitle="Priority score ≥ 75"
+                  />
+                </section>
+
+                <section className="mt-10">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
+                        ACTION REQUIRED
+                      </p>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <h2 className="text-xl font-semibold text-white">
+                          Priority Queue
+                        </h2>
+
+                        <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-gray-400">
+                          {activeOpportunities.length}
+                        </span>
+                      </div>
+
+                      <p className="mt-1 text-sm text-gray-500">
+                        Highest-priority opportunities that need action.
+                      </p>
+                    </div>
+
+                    <div className="text-left sm:text-right">
+                      <p className="text-xs text-gray-500">
+                        Recoverable pipeline
+                      </p>
+
+                      <p className="mt-1 text-lg font-semibold text-white">
+                        {formatMoney(
+                          stats.potentialRevenue,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 space-y-4">
+                    {activeOpportunities.length === 0 ? (
+                      <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400">
+                          ✓
+                        </div>
+
+                        <h3 className="mt-5 text-base font-semibold text-white">
+                          No active opportunities
+                        </h3>
+
+                        <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-gray-500">
+                          Your recovery queue is clear. New missed calls,
+                          inquiries, estimates, and follow-up gaps will
+                          appear here.
+                        </p>
+
+                        <Link
+                          href="/opportunities"
+                          className="mt-6 inline-flex rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+                        >
+                          Open Opportunities
+                        </Link>
+                      </div>
+                    ) : (
+                      activeOpportunities
+                        .slice(0, 6)
+                        .map((opportunity) => (
+                          <OpportunityCard
+                            key={opportunity.id}
+                            opportunity={opportunity}
+                          />
+                        ))
+                    )}
+                  </div>
+                </section>
+
+                <section className="mt-10">
+                  <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-5 sm:p-8">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
+                          RECOVERY OVERVIEW
+                        </p>
+
+                        <h2 className="mt-2 text-xl font-semibold text-white">
+                          Current revenue recovery position
+                        </h2>
+
+                        <p className="mt-1 text-sm text-gray-500">
+                          Revenue identified and recovered by Revora.
+                        </p>
+                      </div>
+
+                      <Link
+                        href="/roi"
+                        className="text-xs font-semibold text-indigo-400 hover:text-indigo-300"
+                      >
+                        Open ROI →
+                      </Link>
+                    </div>
+
+                    <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <Metric
+                        title="Recoverable Pipeline"
+                        value={formatMoney(
+                          stats.potentialRevenue,
+                        )}
+                        subtitle={`${stats.activeOpportunities} active ${
+                          stats.activeOpportunities === 1
+                            ? "opportunity"
+                            : "opportunities"
+                        }`}
+                      />
+
+                      <Metric
+                        title="Recovered"
+                        value={formatMoney(
+                          stats.recoveredRevenue,
+                        )}
+                        subtitle="Actual recovered revenue"
+                        success
+                      />
+
+                      <Metric
+                        title="Recovery Rate"
+                        value={`${stats.recoveryRate.toFixed(
+                          1,
+                        )}%`}
+                        subtitle="Based on identified revenue"
+                      />
+
+                      <Metric
+                        title="High Priority"
+                        value={String(
+                          stats.highPriority,
+                        )}
+                        subtitle="Priority score ≥ 75"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="mt-10 grid gap-4 md:grid-cols-3">
+                  <QuickAction
+                    title="AI Recovery"
+                    description="Let Revora surface the highest-value opportunities."
+                    href="/ai-recovery"
+                  />
+
+                  <QuickAction
+                    title="Follow-Ups"
+                    description="Review scheduled recovery actions and follow-up status."
+                    href="/follow-ups"
+                  />
+
+                  <QuickAction
+                    title="ROI Intelligence"
+                    description="Measure revenue recovered by Revora."
+                    href="/roi"
+                  />
+                </section>
+
+                <footer className="py-10 text-center text-xs text-gray-600">
+                  REVORA · Revenue Recovery Engine
+                </footer>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }

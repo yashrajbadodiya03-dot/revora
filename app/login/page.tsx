@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function handleLogin(e: FormEvent<HTMLFormElement>) {
@@ -31,6 +32,35 @@ export default function LoginPage() {
     window.location.href = "/";
   }
 
+ async function handleGoogleLogin() {
+  setGoogleLoading(true);
+  setError("");
+
+  console.log("GOOGLE BUTTON CLICKED");
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    },
+  });
+
+  console.log("OAUTH DATA:", data);
+  console.log("OAUTH ERROR:", error);
+
+  if (error) {
+    console.error("GOOGLE LOGIN ERROR:", error);
+    setError(error.message);
+    setGoogleLoading(false);
+    return;
+  }
+
+  if (data?.url) {
+    console.log("REDIRECTING TO GOOGLE:", data.url);
+window.location.assign(data.url);
+  }
+}
+
   return (
     <main className="min-h-screen bg-[#07090d] text-white flex items-center justify-center px-6">
       <div className="w-full max-w-md">
@@ -52,6 +82,21 @@ export default function LoginPage() {
           onSubmit={handleLogin}
           className="rounded-3xl border border-white/10 bg-[#0c1016] p-7 shadow-2xl"
         >
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={googleLoading || loading}
+            className="mb-6 flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-white px-4 py-3 font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {googleLoading ? "Connecting..." : "Continue with Google"}
+          </button>
+
+          <div className="mb-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-white/10" />
+            <span className="text-xs text-gray-500">OR</span>
+            <div className="h-px flex-1 bg-white/10" />
+          </div>
+
           <label className="mb-2 block text-sm text-gray-400">
             Email
           </label>
@@ -80,7 +125,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || googleLoading}
             className="w-full rounded-xl bg-white px-4 py-3 font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Signing in..." : "Sign in"}

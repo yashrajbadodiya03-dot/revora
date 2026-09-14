@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({
     request,
   });
@@ -36,12 +36,12 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
+ const pathname = request.nextUrl.pathname;
 
-  const isAuthPage =
-    pathname === "/login" ||
-    pathname === "/signup";
-
+const isAuthPage =
+  pathname === "/login" ||
+  pathname === "/signup" ||
+  pathname === "/auth/callback";
   if (!user && !isAuthPage) {
     return NextResponse.redirect(new URL("/login", request.url));
   }

@@ -1,261 +1,637 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import Sidebar from "@/components/Sidebar";
 import { createClient } from "@/lib/supabase";
+import { calculateOpportunityScore } from "@/lib/opportunity-scoring";
 
-type Opportunity = {
-  id: string;
-  business_id: string;
-  customer_id: string;
-  type: string;
-  title: string;
-  description: string | null;
-  estimated_value: number;
-  priority_score: number;
-  status: string;
-  intent_score: number;
-  probability_score: number;
-  created_at: string;
-};
+type OpportunityStatus =
+  | "new"
+  | "contacted"
+  | "qualified"
+  | "recovered"
+  | "closed"
+  | "lost";
+
+type OpportunityType =
+  | "missed_call"
+  | "unanswered_inquiry"
+  | "old_estimate"
+  | "no_follow_up";
 
 type Customer = {
   id: string;
   name: string;
   email: string | null;
+  phone: string | null;
 };
 
+type Opportunity = {
+  id: string;
+  business_id: string;
+  customer_id: string | null;
+  type: OpportunityType;
+  title: string;
+  description: string | null;
+  estimated_value: number | null;
+  priority_score: number | null;
+  intent_score: number | null;
+  probability_score: number | null;
+  status: OpportunityStatus;
+  created_at: string;
+  updated_at: string | null;
+  customer?: Customer | null;
+};
+
+type OpportunityForm = {
+  customerId: string;
+  type: OpportunityType;
+  title: string;
+  description: string;
+  estimatedValue: string;
+};
+
+type InboundForm = {
+  customerId: string;
+  eventType: "missed_call" | "inquiry" | "estimate";
+  estimatedValue: string;
+  description: string;
+};
+
+type FollowUpForm = {
+  channel: "call" | "sms" | "email";
+  message: string;
+  scheduledAt: string;
+};
+
+const defaultOpportunityForm: OpportunityForm = {
+  customerId: "",
+  type: "missed_call",
+  title: "",
+  description: "",
+  estimatedValue: "",
+};
+
+const defaultInboundForm: InboundForm = {
+  customerId: "",
+  eventType: "missed_call",
+  estimatedValue: "",
+  description: "",
+};
+
+const defaultFollowUpForm: FollowUpForm = {
+  channel: "call",
+  message: "",
+  scheduledAt: "",
+};
+
+const fieldClass =
+  "w-full rounded-xl border border-white/10 bg-[#080b10] px-4 py-3 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10";
+
+const selectClass = `${fieldClass} cursor-pointer`;
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/);
+
+  if (parts.length === 1) {
+    return parts[0]?.slice(0, 2).toUpperCase() || "CU";
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+function typeLabel(type: OpportunityType) {
+  switch (type) {
+    case "missed_call":
+      return "Missed Call";
+    case "unanswered_inquiry":
+      return "Unanswered Inquiry";
+    case "old_estimate":
+      return "Old Estimate";
+    case "no_follow_up":
+      return "No Follow-Up";
+    default:
+      return type;
+  }
+}
+
+function scoringType(type: OpportunityType) {
+  if (type === "unanswered_inquiry") {
+    return "inquiry" as const;
+  }
+
+  return type;
+}
+
+function getCalculatedScores(opportunity: Opportunity) {
+  const createdAt = new Date(opportunity.created_at).getTime();
+
+  const hoursSinceCreated = Number.isFinite(createdAt)
+    ? Math.max(0, (Date.now() - createdAt) / (1000 * 60 * 60))
+    : 0;
+
+  return calculateOpportunityScore({
+    type: scoringType(opportunity.type),
+    revenue: Number(opportunity.estimated_value || 0),
+    hoursSinceCreated,
+    customerResponded: false,
+    followUpCount: 0,
+  });
+}
+
+function statusLabel(status: OpportunityStatus) {
+  switch (status) {
+    case "new":
+      return "New";
+    case "contacted":
+      return "Contacted";
+    case "qualified":
+      return "Qualified";
+    case "recovered":
+      return "Recovered";
+    case "closed":
+      return "Closed";
+    case "lost":
+      return "Lost";
+    default:
+      return status;
+  }
+}
+
+function statusClass(status: OpportunityStatus) {
+  switch (status) {
+    case "new":
+      return "border-indigo-500/20 bg-indigo-500/10 text-indigo-300";
+    case "contacted":
+      return "border-sky-500/20 bg-sky-500/10 text-sky-300";
+    case "qualified":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+    case "recovered":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+    case "closed":
+      return "border-slate-500/20 bg-slate-500/10 text-slate-300";
+    case "lost":
+      return "border-rose-500/20 bg-rose-500/10 text-rose-300";
+    default:
+      return "border-white/10 bg-white/5 text-gray-400";
+  }
+}
+
+function priorityClass(priority: number) {
+  if (priority >= 85) return "text-rose-400";
+  if (priority >= 70) return "text-amber-400";
+  return "text-gray-400";
+}
+
+function urgencyClass(
+  urgency: "critical" | "high" | "medium" | "low",
+) {
+  switch (urgency) {
+    case "critical":
+      return "border-rose-500/20 bg-rose-500/10 text-rose-300";
+    case "high":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-300";
+    case "medium":
+      return "border-indigo-500/20 bg-indigo-500/10 text-indigo-300";
+    default:
+      return "border-white/10 bg-white/5 text-gray-400";
+  }
+}
+
+function urgencyLabel(
+  urgency: "critical" | "high" | "medium" | "low",
+) {
+  return urgency.charAt(0).toUpperCase() + urgency.slice(1);
+}
+
+function nextStatus(
+  status: OpportunityStatus,
+): OpportunityStatus | null {
+  switch (status) {
+    case "new":
+      return "contacted";
+    case "contacted":
+      return "qualified";
+    case "qualified":
+      return "recovered";
+    default:
+      return null;
+  }
+}
+
+function nextStatusLabel(status: OpportunityStatus) {
+  const next = nextStatus(status);
+  return next ? `Mark ${statusLabel(next)}` : "";
+}
+
+function getDefaultFollowUpMessage(
+  opportunity: Opportunity,
+  channel: "call" | "sms" | "email",
+) {
+  const customerName = opportunity.customer?.name || "there";
+
+  if (channel === "call") {
+    if (opportunity.type === "missed_call") {
+      return `Call ${customerName} back about their recent service request.`;
+    }
+
+    if (opportunity.type === "old_estimate") {
+      return `Call ${customerName} to follow up on the previous estimate.`;
+    }
+
+    return `Call ${customerName} and follow up on their open opportunity.`;
+  }
+
+  if (channel === "sms") {
+    if (opportunity.type === "missed_call") {
+      return `Hi ${customerName}, this is Revora HVAC. We noticed we missed your call. Are you still looking for help with your service request?`;
+    }
+
+    if (opportunity.type === "old_estimate") {
+      return `Hi ${customerName}, this is Revora HVAC following up on your previous estimate. Would you like us to help you move forward?`;
+    }
+
+    return `Hi ${customerName}, this is Revora HVAC. Just following up on your recent request. Are you still interested in getting this taken care of?`;
+  }
+
+  if (opportunity.type === "old_estimate") {
+    return `Hi ${customerName},
+
+I wanted to follow up on the estimate we previously provided. If you're still considering the work, we'd be happy to help with the next step.
+
+Best,
+Revora HVAC`;
+  }
+
+  return `Hi ${customerName},
+
+We wanted to follow up on your recent request. If you still need help, we'd be happy to assist.
+
+Best,
+Revora HVAC`;
+}
+
+function SectionHeader({
+  eyebrow,
+  title,
+  description,
+  count,
+  value,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  count?: number;
+  value?: number;
+}) {
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
+          {eyebrow}
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold text-white">{title}</h2>
+
+          {typeof count === "number" && (
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-gray-400">
+              {count}
+            </span>
+          )}
+        </div>
+
+        <p className="mt-1 text-sm text-gray-500">{description}</p>
+      </div>
+
+      {typeof value === "number" && (
+        <div className="text-left sm:text-right">
+          <p className="text-xs text-gray-500">Total value</p>
+
+          <p className="mt-1 text-lg font-semibold text-white">
+            {formatMoney(value)}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OpportunityCard({
+  opportunity,
+  onUpdateStatus,
+  onScheduleFollowUp,
+  recovered = false,
+  updating = false,
+}: {
+  opportunity: Opportunity;
+  onUpdateStatus: (
+    opportunity: Opportunity,
+    status: OpportunityStatus,
+  ) => void;
+  onScheduleFollowUp: (opportunity: Opportunity) => void;
+  recovered?: boolean;
+  updating?: boolean;
+}) {
+  const customerName =
+    opportunity.customer?.name || "Unknown customer";
+
+  const calculated = getCalculatedScores(opportunity);
+
+  const priority = calculated.score;
+  const probability = calculated.recoveryProbability;
+  const value = Number(opportunity.estimated_value || 0);
+
+  const next = nextStatus(opportunity.status);
+
+  return (
+    <div
+      className={`rounded-2xl border p-5 transition ${
+        recovered
+          ? "border-emerald-500/10 bg-emerald-500/[0.025]"
+          : "border-white/10 bg-white/[0.02] hover:border-white/15"
+      }`}
+    >
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-3">
+            <div
+              className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${
+                recovered
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "bg-indigo-500/15 text-indigo-400"
+              }`}
+            >
+              {getInitials(customerName)}
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="truncate text-base font-semibold text-white">
+                  {customerName}
+                </h3>
+
+                <span className="rounded-md bg-white/5 px-2 py-1 text-[10px] capitalize text-gray-500">
+                  {typeLabel(opportunity.type)}
+                </span>
+
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-medium ${statusClass(
+                    opportunity.status,
+                  )}`}
+                >
+                  {statusLabel(opportunity.status)}
+                </span>
+
+                <span
+                  className={`rounded-md border px-2 py-1 text-[10px] font-medium ${urgencyClass(
+                    calculated.urgency,
+                  )}`}
+                >
+                  {urgencyLabel(calculated.urgency)}
+                </span>
+              </div>
+
+              <p className="mt-1 text-xs text-gray-500">
+                {opportunity.title}
+              </p>
+
+              {opportunity.description && (
+                <p className="mt-4 max-w-2xl text-sm leading-6 text-gray-500">
+                  {opportunity.description}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-6 lg:min-w-[430px]">
+          <div>
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              VALUE
+            </p>
+
+            <p className="mt-1 text-lg font-semibold text-white">
+              {formatMoney(value)}
+            </p>
+
+            <p className="mt-1 text-[10px] text-gray-600">
+              {recovered ? "Recovered value" : "Potential value"}
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              PRIORITY
+            </p>
+
+            <p
+              className={`mt-1 text-lg font-semibold ${priorityClass(
+                priority,
+              )}`}
+            >
+              {priority}
+            </p>
+
+            <p className="mt-1 text-[10px] text-gray-600">
+              AI calculated
+            </p>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+              PROBABILITY
+            </p>
+
+            <p className="mt-1 text-lg font-semibold text-indigo-400">
+              {probability}%
+            </p>
+
+            <p className="mt-1 text-[10px] text-gray-600">
+              Recovery estimate
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 border-t border-white/5 pt-5 sm:grid-cols-3">
+        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+            URGENCY
+          </p>
+
+          <p
+            className={`mt-1 text-xs font-semibold ${
+              calculated.urgency === "critical"
+                ? "text-rose-400"
+                : calculated.urgency === "high"
+                  ? "text-amber-400"
+                  : calculated.urgency === "medium"
+                    ? "text-indigo-400"
+                    : "text-gray-400"
+            }`}
+          >
+            {urgencyLabel(calculated.urgency)}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+            AI RECOMMENDATION
+          </p>
+
+          <p className="mt-1 text-xs font-semibold text-gray-300">
+            {calculated.recommendedAction}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
+            WHY REVORA PRIORITIZED THIS
+          </p>
+
+          <p className="mt-1 truncate text-xs text-gray-500">
+            {calculated.reason}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <span className="text-xs text-gray-600">
+          Created {formatDate(opportunity.created_at)}
+        </span>
+
+        {!recovered && opportunity.customer?.email && (
+          <a
+            href={`mailto:${opportunity.customer.email}`}
+            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+          >
+            Email Customer
+          </a>
+        )}
+
+        {!recovered && opportunity.customer?.phone && (
+          <a
+            href={`tel:${opportunity.customer.phone}`}
+            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+          >
+            Call Customer
+          </a>
+        )}
+
+        {!recovered && next && (
+          <button
+            type="button"
+            onClick={() => onUpdateStatus(opportunity, next)}
+            disabled={updating}
+            className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {updating
+              ? "Updating..."
+              : nextStatusLabel(opportunity.status)}
+          </button>
+        )}
+
+        {!recovered && (
+          <button
+            type="button"
+            onClick={() => onScheduleFollowUp(opportunity)}
+            disabled={updating}
+            className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-2.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-500/15 disabled:opacity-50"
+          >
+            Schedule Follow-Up
+          </button>
+        )}
+
+        {recovered && opportunity.customer_id && (
+          <Link
+            href="/customers"
+            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+          >
+            View Customer
+          </Link>
+        )}
+
+        {recovered && (
+          <span className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-2.5 text-xs font-semibold text-emerald-300">
+            Revenue recovered
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function OpportunitiesPage() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
-  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [opportunities, setOpportunities] =
+    useState<Opportunity[]>([]);
+
+  const [customers, setCustomers] =
+    useState<Customer[]>([]);
+
+  const [businessId, setBusinessId] =
+    useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
-
-  const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [value, setValue] = useState("");
-  const [type, setType] = useState("missed_call");
-  const [description, setDescription] = useState("");
+  const [updatingOpportunityId, setUpdatingOpportunityId] =
+    useState<string | null>(null);
 
-  const [followUpOpportunity, setFollowUpOpportunity] =
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [showCreateModal, setShowCreateModal] =
+    useState(false);
+
+  const [showInboundModal, setShowInboundModal] =
+    useState(false);
+
+  const [showFollowUpModal, setShowFollowUpModal] =
+    useState(false);
+
+  const [selectedOpportunity, setSelectedOpportunity] =
     useState<Opportunity | null>(null);
-  const [followUpChannel, setFollowUpChannel] = useState("email");
-  const [followUpMessage, setFollowUpMessage] = useState("");
-  const [followUpDate, setFollowUpDate] = useState("");
-  const [followUpSaving, setFollowUpSaving] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [opportunityForm, setOpportunityForm] =
+    useState<OpportunityForm>(defaultOpportunityForm);
+
+  const [inboundForm, setInboundForm] =
+    useState<InboundForm>(defaultInboundForm);
+
+  const [followUpForm, setFollowUpForm] =
+    useState<FollowUpForm>(defaultFollowUpForm);
 
   async function loadData() {
     setLoading(true);
-
-    const { data: opportunitiesData, error: opportunitiesError } =
-      await supabase
-        .from("opportunities")
-        .select("*")
-        .order("priority_score", { ascending: false });
-
-    const { data: customersData, error: customersError } =
-      await supabase
-        .from("customers")
-        .select("id, name, email");
-
-    if (opportunitiesError) {
-      console.error("Opportunities error:", opportunitiesError);
-    }
-
-    if (customersError) {
-      console.error("Customers error:", customersError);
-    }
-
-    setOpportunities(opportunitiesData || []);
-    setCustomers(customersData || []);
-    setLoading(false);
-  }
-
-  function getCustomer(customerId: string) {
-    return customers.find((customer) => customer.id === customerId);
-  }
-
-  async function createOpportunity() {
-    if (!name.trim()) {
-      alert("Customer name is required.");
-      return;
-    }
-
-    if (!value || Number(value) <= 0) {
-      alert("Enter a valid estimated value.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        alert("You are not logged in.");
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("business_id")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError || !profile?.business_id) {
-        console.error("Profile error:", profileError);
-        alert("Business not found for this account.");
-        return;
-      }
-
-      let customer = customers.find(
-        (item) =>
-          item.name.toLowerCase() === name.trim().toLowerCase() &&
-          (email.trim() === "" || item.email === email.trim())
-      );
-
-      if (!customer) {
-        const { data: newCustomer, error: customerError } =
-          await supabase
-            .from("customers")
-            .insert({
-              business_id: profile.business_id,
-              name: name.trim(),
-              email: email.trim() || null,
-            })
-            .select("id, name, email")
-            .single();
-
-        if (customerError || !newCustomer) {
-          console.error("Customer creation error:", customerError);
-          alert("Could not create customer.");
-          return;
-        }
-
-        customer = newCustomer;
-        setCustomers((current) => [...current, newCustomer]);
-      }
-
-      const { data: newOpportunity, error: opportunityError } =
-        await supabase
-          .from("opportunities")
-          .insert({
-            business_id: profile.business_id,
-            customer_id: customer.id,
-            type,
-            title: `${type.replaceAll("_", " ")} - ${customer.name}`,
-            description: description.trim() || null,
-            estimated_value: Number(value),
-            priority_score: 80,
-            intent_score: 80,
-            probability_score: 70,
-            status: "new",
-          })
-          .select("*")
-          .single();
-
-      if (opportunityError || !newOpportunity) {
-        const errorInfo = {
-          message: opportunityError?.message,
-          details: opportunityError?.details,
-          hint: opportunityError?.hint,
-          code: opportunityError?.code,
-        };
-
-        console.error(
-          "OPPORTUNITY ERROR:",
-          JSON.stringify(errorInfo, null, 2)
-        );
-
-        alert(
-          `OPPORTUNITY ERROR\n\n${JSON.stringify(
-            errorInfo,
-            null,
-            2
-          )}`
-        );
-
-        return;
-      }
-
-      setOpportunities((current) => [
-        newOpportunity,
-        ...current,
-      ]);
-
-      setName("");
-      setEmail("");
-      setValue("");
-      setType("missed_call");
-      setDescription("");
-      setShowForm(false);
-
-      alert("Opportunity created successfully.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function updateStatus(id: string, status: string) {
-    const { error } = await supabase
-      .from("opportunities")
-      .update({
-        status,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-
-    if (error) {
-      console.error("Status update error:", error);
-      alert(`Could not update status: ${error.message}`);
-      return;
-    }
-
-    setOpportunities((current) =>
-      current.map((opportunity) =>
-        opportunity.id === id
-          ? { ...opportunity, status }
-          : opportunity
-      )
-    );
-  }
-
-  function openFollowUp(opportunity: Opportunity) {
-    const customer = getCustomer(opportunity.customer_id);
-
-    setFollowUpOpportunity(opportunity);
-    setFollowUpChannel(customer?.email ? "email" : "call");
-    setFollowUpMessage(
-      `Follow up with ${
-        customer?.name || "customer"
-      } regarding this opportunity.`
-    );
-    setFollowUpDate("");
-  }
-
-  async function createFollowUp() {
-    if (!followUpOpportunity) return;
-
-    if (!followUpDate) {
-      alert("Please select a follow-up date and time.");
-      return;
-    }
-
-    if (!followUpMessage.trim()) {
-      alert("Please enter a follow-up message.");
-      return;
-    }
-
-    setFollowUpSaving(true);
+    setError("");
 
     try {
       const {
@@ -263,14 +639,12 @@ export default function OpportunitiesPage() {
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError) {
-        alert(`User error: ${userError.message}`);
-        return;
-      }
+      if (userError) throw userError;
 
       if (!user) {
-        alert("You are not logged in.");
-        return;
+        throw new Error(
+          "You must be signed in to view opportunities.",
+        );
       }
 
       const { data: profile, error: profileError } =
@@ -278,469 +652,1366 @@ export default function OpportunitiesPage() {
           .from("profiles")
           .select("business_id")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
-      if (profileError || !profile?.business_id) {
-        alert(
-          `Profile error: ${
-            profileError?.message || "Business not found."
-          }`
+      if (profileError) throw profileError;
+
+      if (!profile?.business_id) {
+        throw new Error(
+          "No business is associated with your account.",
         );
-        return;
       }
 
-      const followUpData = {
-        business_id: profile.business_id,
-        opportunity_id: followUpOpportunity.id,
-        channel: followUpChannel,
-        message: followUpMessage.trim(),
-        scheduled_at: new Date(
-          followUpDate
-        ).toISOString(),
-        status: "pending",
-      };
+      setBusinessId(profile.business_id);
 
-      const { data, error } = await supabase
-        .from("follow_ups")
-        .insert(followUpData)
-        .select()
-        .single();
+      const [
+        { data: opportunityData, error: opportunityError },
+        { data: customerData, error: customerError },
+      ] = await Promise.all([
+        supabase
+          .from("opportunities")
+          .select(
+            `
+              id,
+              business_id,
+              customer_id,
+              type,
+              title,
+              description,
+              estimated_value,
+              priority_score,
+              intent_score,
+              probability_score,
+              status,
+              created_at,
+              updated_at,
+              customer:customers (
+                id,
+                name,
+                email,
+                phone
+              )
+            `,
+          )
+          .eq("business_id", profile.business_id)
+          .order("created_at", {
+            ascending: false,
+          }),
 
-      if (error) {
-        const errorInfo = {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        };
+        supabase
+          .from("customers")
+          .select("id, name, email, phone")
+          .eq("business_id", profile.business_id)
+          .order("name", {
+            ascending: true,
+          }),
+      ]);
 
-        console.error(
-          "FOLLOW-UP ERROR:",
-          JSON.stringify(errorInfo, null, 2)
-        );
-
-        alert(
-          `FOLLOW-UP ERROR\n\n${JSON.stringify(
-            errorInfo,
-            null,
-            2
-          )}`
-        );
-
-        return;
+      if (opportunityError) {
+        throw opportunityError;
       }
 
-      console.log("Follow-up created:", data);
+      if (customerError) {
+        throw customerError;
+      }
 
-      setFollowUpOpportunity(null);
-      setFollowUpMessage("");
-      setFollowUpDate("");
+      const normalizedOpportunities: Opportunity[] =
+        (opportunityData || []).map((opportunity) => ({
+          ...opportunity,
+          customer: Array.isArray(opportunity.customer)
+            ? opportunity.customer[0] ?? null
+            : opportunity.customer ?? null,
+        }));
 
-      alert("Follow-up scheduled successfully!");
+      setOpportunities(normalizedOpportunities);
+      setCustomers((customerData || []) as Customer[]);
     } catch (err) {
-      console.error("Unexpected follow-up error:", err);
-
-      alert(
-        `Unexpected error: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load opportunities.",
       );
     } finally {
-      setFollowUpSaving(false);
+      setLoading(false);
     }
   }
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-[#07090d] p-8 text-white">
-        <p className="text-gray-400">
-          Loading opportunities...
-        </p>
-      </main>
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const activeOpportunities = useMemo(
+    () =>
+      opportunities.filter(
+        (opportunity) =>
+          !["recovered", "closed", "lost"].includes(
+            opportunity.status,
+          ),
+      ),
+    [opportunities],
+  );
+
+  const recoveredOpportunities = useMemo(
+    () =>
+      opportunities.filter(
+        (opportunity) =>
+          opportunity.status === "recovered",
+      ),
+    [opportunities],
+  );
+
+  const closedOrLostOpportunities = useMemo(
+    () =>
+      opportunities.filter(
+        (opportunity) =>
+          opportunity.status === "closed" ||
+          opportunity.status === "lost",
+      ),
+    [opportunities],
+  );
+
+  const totalPotential = useMemo(
+    () =>
+      activeOpportunities.reduce(
+        (sum, opportunity) =>
+          sum + Number(opportunity.estimated_value || 0),
+        0,
+      ),
+    [activeOpportunities],
+  );
+
+  const recoveredRevenue = useMemo(
+    () =>
+      recoveredOpportunities.reduce(
+        (sum, opportunity) =>
+          sum + Number(opportunity.estimated_value || 0),
+        0,
+      ),
+    [recoveredOpportunities],
+  );
+
+  const highPriorityCount = useMemo(
+    () =>
+      activeOpportunities.filter(
+        (opportunity) =>
+          getCalculatedScores(opportunity).score >= 75,
+      ).length,
+    [activeOpportunities],
+  );
+
+  function resetMessages() {
+    setError("");
+    setSuccess("");
+  }
+
+  function resetOpportunityForm() {
+    setOpportunityForm(defaultOpportunityForm);
+  }
+
+  function resetInboundForm() {
+    setInboundForm(defaultInboundForm);
+  }
+
+  function closeCreateModal() {
+    setShowCreateModal(false);
+    resetOpportunityForm();
+  }
+
+  function closeInboundModal() {
+    setShowInboundModal(false);
+    resetInboundForm();
+  }
+
+  function closeFollowUpModal() {
+    setShowFollowUpModal(false);
+    setSelectedOpportunity(null);
+    setFollowUpForm(defaultFollowUpForm);
+  }
+
+  async function createOpportunity(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    resetMessages();
+
+    if (!businessId) {
+      setError("Business information is not available.");
+      return;
+    }
+
+    if (!opportunityForm.customerId) {
+      setError("Please select a customer.");
+      return;
+    }
+
+    const estimatedValue = Number(
+      opportunityForm.estimatedValue,
     );
+
+    if (!opportunityForm.estimatedValue.trim()) {
+      setError("Please enter an estimated value.");
+      return;
+    }
+
+    if (!Number.isFinite(estimatedValue) || estimatedValue <= 0) {
+      setError("Estimated value must be greater than 0.");
+      return;
+    }
+
+    if (!opportunityForm.title.trim()) {
+      setError("Please enter an opportunity title.");
+      return;
+    }
+
+    const calculated = calculateOpportunityScore({
+      type: scoringType(opportunityForm.type),
+      revenue: estimatedValue,
+      hoursSinceCreated: 0,
+      customerResponded: false,
+      followUpCount: 0,
+    });
+
+    setSaving(true);
+
+    try {
+      const { error: insertError } = await supabase
+        .from("opportunities")
+        .insert({
+          business_id: businessId,
+          customer_id: opportunityForm.customerId,
+          type: opportunityForm.type,
+          title: opportunityForm.title.trim(),
+          description:
+            opportunityForm.description.trim() || null,
+          estimated_value: estimatedValue,
+          priority_score: calculated.score,
+          intent_score: calculated.score,
+          probability_score: calculated.recoveryProbability,
+          status: "new",
+        });
+
+      if (insertError) throw insertError;
+
+      closeCreateModal();
+
+      setSuccess("Opportunity created and scored by Revora.");
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create opportunity.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createInboundEvent(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    resetMessages();
+
+    if (!businessId) {
+      setError("Business information is not available.");
+      return;
+    }
+
+    if (!inboundForm.customerId) {
+      setError("Please select a customer.");
+      return;
+    }
+
+    const estimatedValue = Number(
+      inboundForm.estimatedValue,
+    );
+
+    if (!inboundForm.estimatedValue.trim()) {
+      setError("Please enter an estimated value.");
+      return;
+    }
+
+    if (!Number.isFinite(estimatedValue) || estimatedValue <= 0) {
+      setError("Estimated value must be greater than 0.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { error: insertError } = await supabase
+        .from("inbound_events")
+        .insert({
+          business_id: businessId,
+          customer_id: inboundForm.customerId,
+          event_type: inboundForm.eventType,
+          status: "open",
+          estimated_value: estimatedValue,
+          details: {
+            description:
+              inboundForm.description.trim() || null,
+          },
+        });
+
+      if (insertError) throw insertError;
+
+      closeInboundModal();
+
+      setSuccess(
+        "Inbound event created. Revora will create the recovery opportunity automatically.",
+      );
+
+      await loadData();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create inbound event.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateStatus(
+    opportunity: Opportunity,
+    status: OpportunityStatus,
+  ) {
+    resetMessages();
+    setSaving(true);
+    setUpdatingOpportunityId(opportunity.id);
+
+    try {
+      if (status === "contacted") {
+        const { data, error: rpcError } = await supabase.rpc(
+          "mark_opportunity_contacted",
+          {
+            opportunity_id: opportunity.id,
+          },
+        );
+
+        if (rpcError) throw rpcError;
+
+        if (!data) {
+          throw new Error(
+            "Supabase did not return the updated opportunity.",
+          );
+        }
+
+        setSuccess(
+          `${opportunity.title} marked as contacted.`,
+        );
+      } else if (status === "qualified") {
+        const { data, error: rpcError } = await supabase.rpc(
+          "mark_opportunity_qualified",
+          {
+            opportunity_id: opportunity.id,
+          },
+        );
+
+        if (rpcError) throw rpcError;
+
+        if (!data) {
+          throw new Error(
+            "Supabase did not return the updated opportunity.",
+          );
+        }
+
+        setSuccess(
+          `${opportunity.title} marked as qualified.`,
+        );
+      } else if (status === "recovered") {
+        const { data, error: rpcError } = await supabase.rpc(
+          "mark_opportunity_recovered",
+          {
+            opportunity_id: opportunity.id,
+          },
+        );
+
+        if (rpcError) throw rpcError;
+
+        if (!data) {
+          throw new Error(
+            "Supabase did not return the updated opportunity.",
+          );
+        }
+
+        setSuccess(
+          `${opportunity.title} marked as recovered.`,
+        );
+      } else {
+        const { error: updateError } = await supabase
+          .from("opportunities")
+          .update({
+            status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", opportunity.id)
+          .eq("business_id", businessId);
+
+        if (updateError) {
+          throw updateError;
+        }
+
+        setSuccess(
+          `${opportunity.title} moved to ${statusLabel(status)}.`,
+        );
+      }
+
+      await loadData();
+    } catch (err) {
+      console.error(
+        "Opportunity status update error:",
+        err,
+      );
+
+      setError(
+        err instanceof Error
+          ? `Update failed: ${err.message}`
+          : "Update failed: Unknown error",
+      );
+    } finally {
+      setSaving(false);
+      setUpdatingOpportunityId(null);
+    }
+  }
+
+  function openFollowUpModal(
+    opportunity: Opportunity,
+  ) {
+    resetMessages();
+
+    const channel: "call" | "sms" | "email" = "call";
+
+    setSelectedOpportunity(opportunity);
+
+    setFollowUpForm({
+      channel,
+      message: getDefaultFollowUpMessage(
+        opportunity,
+        channel,
+      ),
+      scheduledAt: "",
+    });
+
+    setShowFollowUpModal(true);
+  }
+
+  async function createFollowUp(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    resetMessages();
+
+    if (!businessId) {
+      setError("Business information is not available.");
+      return;
+    }
+
+    if (!selectedOpportunity) {
+      setError("No opportunity selected.");
+      return;
+    }
+
+    if (!followUpForm.message.trim()) {
+      setError("Please enter a follow-up message.");
+      return;
+    }
+
+    if (!followUpForm.scheduledAt) {
+      setError(
+        "Please select a scheduled date and time.",
+      );
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { error: insertError } = await supabase
+        .from("follow_ups")
+        .insert({
+          business_id: businessId,
+          opportunity_id: selectedOpportunity.id,
+          channel: followUpForm.channel,
+          message: followUpForm.message.trim(),
+          scheduled_at: new Date(
+            followUpForm.scheduledAt,
+          ).toISOString(),
+          status: "pending",
+        });
+
+      if (insertError) throw insertError;
+
+      closeFollowUpModal();
+
+      setSuccess("Follow-up scheduled successfully.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to schedule follow-up.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleFollowUpChannelChange(
+    channel: "call" | "sms" | "email",
+  ) {
+    if (!selectedOpportunity) return;
+
+    setFollowUpForm((current) => ({
+      ...current,
+      channel,
+      message: getDefaultFollowUpMessage(
+        selectedOpportunity,
+        channel,
+      ),
+    }));
   }
 
   return (
-    <main className="min-h-screen bg-[#07090d] px-5 py-8 text-white sm:px-8 lg:px-12">
-      <div className="mx-auto max-w-7xl">
+    <main className="min-h-screen bg-[#07090d] text-white">
+      <div className="flex min-h-screen">
+        <Sidebar />
 
-        <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-              REVORA
-            </p>
+        <section className="min-w-0 flex-1 lg:ml-[250px]">
+          <div className="w-full px-5 py-8 sm:px-7 lg:px-8 xl:px-10">
+            <header className="flex flex-col gap-6 border-b border-white/10 pb-8 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
+                  OPPORTUNITY INTELLIGENCE
+                </p>
 
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-              Opportunities
-            </h1>
+                <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+                  Revenue opportunities
+                </h1>
 
-            <p className="mt-2 text-sm text-gray-500">
-              Revenue opportunities that need attention.
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
+                  Find, prioritize, and recover revenue that would otherwise
+                  be left behind.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetMessages();
+                    setShowInboundModal(true);
+                  }}
+                  className="shrink-0 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-white/20 hover:bg-white/5"
+                >
+                  Simulate Inbound Event
+                </button>
+
+                <span className="mx-3 hidden h-6 w-px bg-white/10 sm:block" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetMessages();
+                    setShowCreateModal(true);
+                  }}
+                  className="shrink-0 rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
+                >
+                  + Create Opportunity
+                </button>
+              </div>
+            </header>
+
+            {error &&
+              !showCreateModal &&
+              !showInboundModal &&
+              !showFollowUpModal && (
+                <div className="mt-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 px-5 py-4 text-sm text-rose-300">
+                  {error}
+                </div>
+              )}
+
+            {success && (
+              <div className="mt-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-4 text-sm text-emerald-300">
+                {success}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="mt-8 rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
+                <p className="text-sm text-gray-500">
+                  Loading opportunities...
+                </p>
+              </div>
+            ) : (
+              <>
+                <section className="mt-8 grid gap-4 md:grid-cols-4">
+                  <Metric
+                    title="Potential Revenue"
+                    value={formatMoney(totalPotential)}
+                    subtitle={`${activeOpportunities.length} active ${
+                      activeOpportunities.length === 1
+                        ? "opportunity"
+                        : "opportunities"
+                    }`}
+                  />
+
+                  <Metric
+                    title="Active Opportunities"
+                    value={String(activeOpportunities.length)}
+                    subtitle={
+                      activeOpportunities.length === 1
+                        ? "Requires recovery action"
+                        : "Require recovery action"
+                    }
+                  />
+
+                  <Metric
+                    title="Recovered Revenue"
+                    value={formatMoney(recoveredRevenue)}
+                    subtitle={`${recoveredOpportunities.length} recovered`}
+                    success
+                  />
+
+                  <Metric
+                    title="High Priority"
+                    value={String(highPriorityCount)}
+                    subtitle="AI score ≥ 75"
+                  />
+                </section>
+
+                <section className="mt-10">
+                  <SectionHeader
+                    eyebrow="ACTION REQUIRED"
+                    title="Active recovery opportunities"
+                    description="Revora continuously scores these opportunities based on value, type, and time sensitivity."
+                    count={activeOpportunities.length}
+                    value={totalPotential}
+                  />
+
+                  <div className="mt-5 space-y-4">
+                    {activeOpportunities.length === 0 ? (
+                      <EmptyState
+                        title="No active opportunities"
+                        description="Your recovery queue is clear. New missed calls, inquiries, estimates, and follow-up gaps will appear here."
+                        actionLabel="Simulate Inbound Event"
+                        onAction={() => {
+                          resetMessages();
+                          setShowInboundModal(true);
+                        }}
+                      />
+                    ) : (
+                      activeOpportunities.map(
+                        (opportunity) => (
+                          <OpportunityCard
+                            key={opportunity.id}
+                            opportunity={opportunity}
+                            onUpdateStatus={updateStatus}
+                            onScheduleFollowUp={openFollowUpModal}
+                            updating={
+                              updatingOpportunityId === opportunity.id
+                            }
+                          />
+                        ),
+                      )
+                    )}
+                  </div>
+                </section>
+
+                {recoveredOpportunities.length > 0 && (
+                  <section className="mt-10">
+                    <div className="rounded-3xl border border-emerald-500/10 bg-[#0c1016] p-6 sm:p-8">
+                      <SectionHeader
+                        eyebrow="RECOVERY HISTORY"
+                        title="Recovered revenue"
+                        description="Completed recovery opportunities are kept here as historical revenue records."
+                        count={recoveredOpportunities.length}
+                        value={recoveredRevenue}
+                      />
+
+                      <div className="mt-5 space-y-4">
+                        {recoveredOpportunities.map(
+                          (opportunity) => (
+                            <OpportunityCard
+                              key={opportunity.id}
+                              opportunity={opportunity}
+                              onUpdateStatus={updateStatus}
+                              onScheduleFollowUp={openFollowUpModal}
+                              recovered
+                            />
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {closedOrLostOpportunities.length > 0 && (
+                  <section className="mt-10">
+                    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 sm:p-8">
+                      <SectionHeader
+                        eyebrow="ARCHIVE"
+                        title="Closed & lost"
+                        description="Opportunities that are no longer part of the active recovery pipeline."
+                        count={closedOrLostOpportunities.length}
+                      />
+
+                      <div className="mt-5 space-y-4">
+                        {closedOrLostOpportunities.map(
+                          (opportunity) => (
+                            <OpportunityCard
+                              key={opportunity.id}
+                              opportunity={opportunity}
+                              onUpdateStatus={updateStatus}
+                              onScheduleFollowUp={openFollowUpModal}
+                            />
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                <section className="mt-10 grid gap-4 md:grid-cols-3">
+                  <QuickAction
+                    title="AI Recovery"
+                    description="Let Revora surface the highest-value opportunities."
+                    href="/ai-recovery"
+                  />
+
+                  <QuickAction
+                    title="Follow-Ups"
+                    description="Review scheduled recovery actions and follow-up status."
+                    href="/follow-ups"
+                  />
+
+                  <QuickAction
+                    title="ROI Intelligence"
+                    description="Measure revenue recovered by Revora."
+                    href="/roi"
+                  />
+                </section>
+
+                <footer className="py-10 text-center text-xs text-gray-600">
+                  REVORA · Revenue Recovery Engine
+                </footer>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {showCreateModal && (
+        <Modal
+          title="Create Opportunity"
+          description="Add a revenue opportunity directly to the recovery pipeline."
+          onClose={closeCreateModal}
+        >
+          <form
+            onSubmit={createOpportunity}
+            className="space-y-5"
+          >
+            {error && <ModalError message={error} />}
+
+            <Field label="Customer">
+              <select
+                value={opportunityForm.customerId}
+                onChange={(event) =>
+                  setOpportunityForm((current) => ({
+                    ...current,
+                    customerId: event.target.value,
+                  }))
+                }
+                className={selectClass}
+                style={{
+                  colorScheme: "dark",
+                }}
+              >
+                <option
+                  value=""
+                  className="bg-[#080b10] text-white"
+                >
+                  Select customer
+                </option>
+
+                {customers.map((customer) => (
+                  <option
+                    key={customer.id}
+                    value={customer.id}
+                    className="bg-[#080b10] text-white"
+                  >
+                    {customer.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Type">
+                <select
+                  value={opportunityForm.type}
+                  onChange={(event) =>
+                    setOpportunityForm((current) => ({
+                      ...current,
+                      type: event.target.value as OpportunityType,
+                    }))
+                  }
+                  className={selectClass}
+                  style={{
+                    colorScheme: "dark",
+                  }}
+                >
+                  <option
+                    value="missed_call"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Missed Call
+                  </option>
+
+                  <option
+                    value="unanswered_inquiry"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Unanswered Inquiry
+                  </option>
+
+                  <option
+                    value="old_estimate"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Old Estimate
+                  </option>
+
+                  <option
+                    value="no_follow_up"
+                    className="bg-[#080b10] text-white"
+                  >
+                    No Follow-Up
+                  </option>
+                </select>
+              </Field>
+
+              <Field label="Estimated Value">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={opportunityForm.estimatedValue}
+                  onChange={(event) =>
+                    setOpportunityForm((current) => ({
+                      ...current,
+                      estimatedValue: event.target.value,
+                    }))
+                  }
+                  placeholder="5000"
+                  className={fieldClass}
+                />
+              </Field>
+            </div>
+
+            <Field label="Title">
+              <input
+                type="text"
+                value={opportunityForm.title}
+                onChange={(event) =>
+                  setOpportunityForm((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+                placeholder="Missed Call - New Service Lead"
+                className={fieldClass}
+              />
+            </Field>
+
+            <Field label="Description">
+              <textarea
+                rows={3}
+                value={opportunityForm.description}
+                onChange={(event) =>
+                  setOpportunityForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="Describe the recovery opportunity..."
+                className={`${fieldClass} resize-none`}
+              />
+            </Field>
+
+            <div className="rounded-2xl border border-indigo-500/15 bg-indigo-500/5 p-4">
+              <p className="text-xs font-semibold text-indigo-300">
+                REVORA INTELLIGENCE
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-gray-500">
+                Priority and recovery probability are calculated
+                automatically using opportunity type, revenue value,
+                and time sensitivity.
+              </p>
+            </div>
+
+            <ModalActions
+              onCancel={closeCreateModal}
+              saving={saving}
+              submitLabel="Create Opportunity"
+            />
+          </form>
+        </Modal>
+      )}
+
+      {showInboundModal && (
+        <Modal
+          title="Simulate Inbound Event"
+          description="Create a realistic inbound event and let Revora generate the opportunity automatically."
+          onClose={closeInboundModal}
+        >
+          <form
+            onSubmit={createInboundEvent}
+            className="space-y-5"
+          >
+            {error && <ModalError message={error} />}
+
+            <Field label="Customer">
+              <select
+                value={inboundForm.customerId}
+                onChange={(event) =>
+                  setInboundForm((current) => ({
+                    ...current,
+                    customerId: event.target.value,
+                  }))
+                }
+                className={selectClass}
+                style={{
+                  colorScheme: "dark",
+                }}
+              >
+                <option
+                  value=""
+                  className="bg-[#080b10] text-white"
+                >
+                  Select customer
+                </option>
+
+                {customers.map((customer) => (
+                  <option
+                    key={customer.id}
+                    value={customer.id}
+                    className="bg-[#080b10] text-white"
+                  >
+                    {customer.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Event Type">
+                <select
+                  value={inboundForm.eventType}
+                  onChange={(event) =>
+                    setInboundForm((current) => ({
+                      ...current,
+                      eventType: event.target.value as
+                        | "missed_call"
+                        | "inquiry"
+                        | "estimate",
+                    }))
+                  }
+                  className={selectClass}
+                  style={{
+                    colorScheme: "dark",
+                  }}
+                >
+                  <option
+                    value="missed_call"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Missed Call
+                  </option>
+
+                  <option
+                    value="inquiry"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Unanswered Inquiry
+                  </option>
+
+                  <option
+                    value="estimate"
+                    className="bg-[#080b10] text-white"
+                  >
+                    Old Estimate
+                  </option>
+                </select>
+              </Field>
+
+              <Field label="Estimated Value">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={inboundForm.estimatedValue}
+                  onChange={(event) =>
+                    setInboundForm((current) => ({
+                      ...current,
+                      estimatedValue: event.target.value,
+                    }))
+                  }
+                  placeholder="5000"
+                  className={fieldClass}
+                />
+              </Field>
+            </div>
+
+            <Field label="Description">
+              <textarea
+                rows={4}
+                value={inboundForm.description}
+                onChange={(event) =>
+                  setInboundForm((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                placeholder="After-hours AC repair request"
+                className={`${fieldClass} resize-none`}
+              />
+            </Field>
+
+            <div className="rounded-2xl border border-indigo-500/15 bg-indigo-500/5 p-4">
+              <p className="text-xs font-semibold text-indigo-300">
+                AUTOMATIC DETECTION
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-gray-500">
+                Once submitted, Revora&apos;s database trigger will convert
+                the open inbound event into the appropriate recovery
+                opportunity.
+              </p>
+            </div>
+
+            <ModalActions
+              onCancel={closeInboundModal}
+              saving={saving}
+              submitLabel="Create Inbound Event"
+            />
+          </form>
+        </Modal>
+      )}
+
+      {showFollowUpModal && selectedOpportunity && (
+        <Modal
+          title="Schedule Follow-Up"
+          description={`Create a recovery action for ${
+            selectedOpportunity.customer?.name || "this customer"
+          }.`}
+          onClose={closeFollowUpModal}
+        >
+          <form
+            onSubmit={createFollowUp}
+            className="space-y-5"
+          >
+            {error && <ModalError message={error} />}
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-xs font-bold text-indigo-400">
+                  {getInitials(
+                    selectedOpportunity.customer?.name ||
+                      "Unknown customer",
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {selectedOpportunity.customer?.name ||
+                      "Unknown customer"}
+                  </p>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    {selectedOpportunity.title} ·{" "}
+                    {formatMoney(
+                      Number(
+                        selectedOpportunity.estimated_value || 0,
+                      ),
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <Field label="Channel">
+              <div className="grid grid-cols-3 gap-2">
+                {(["call", "sms", "email"] as const).map(
+                  (channel) => (
+                    <button
+                      key={channel}
+                      type="button"
+                      onClick={() =>
+                        handleFollowUpChannelChange(channel)
+                      }
+                      className={`rounded-xl border px-3 py-3 text-xs font-semibold capitalize transition ${
+                        followUpForm.channel === channel
+                          ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+                          : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                      }`}
+                    >
+                      {channel}
+                    </button>
+                  ),
+                )}
+              </div>
+            </Field>
+
+            <Field label="Message / Action">
+              <textarea
+                rows={6}
+                value={followUpForm.message}
+                onChange={(event) =>
+                  setFollowUpForm((current) => ({
+                    ...current,
+                    message: event.target.value,
+                  }))
+                }
+                className={`${fieldClass} resize-none`}
+              />
+            </Field>
+
+            <Field label="Scheduled At">
+              <input
+                type="datetime-local"
+                value={followUpForm.scheduledAt}
+                onChange={(event) =>
+                  setFollowUpForm((current) => ({
+                    ...current,
+                    scheduledAt: event.target.value,
+                  }))
+                }
+                className={fieldClass}
+                style={{
+                  colorScheme: "dark",
+                }}
+              />
+            </Field>
+
+            <ModalActions
+              onCancel={closeFollowUpModal}
+              saving={saving}
+              submitLabel="Schedule Follow-Up"
+            />
+          </form>
+        </Modal>
+      )}
+    </main>
+  );
+}
+
+function Metric({
+  title,
+  value,
+  subtitle,
+  success = false,
+}: {
+  title: string;
+  value: string;
+  subtitle: string;
+  success?: boolean;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/15">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">{title}</p>
+
+        <span
+          className={`h-2 w-2 rounded-full ${
+            success ? "bg-emerald-500" : "bg-indigo-500"
+          }`}
+        />
+      </div>
+
+      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em] text-white">
+        {value}
+      </p>
+
+      <p
+        className={`mt-2 text-xs font-medium ${
+          success ? "text-emerald-500" : "text-gray-500"
+        }`}
+      >
+        {subtitle}
+      </p>
+    </div>
+  );
+}
+
+function EmptyState({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400">
+        ✓
+      </div>
+
+      <h3 className="mt-5 text-base font-semibold text-white">
+        {title}
+      </h3>
+
+      <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-gray-500">
+        {description}
+      </p>
+
+      {actionLabel && onAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          className="mt-6 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function QuickAction({
+  title,
+  description,
+  href,
+}: {
+  title: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="block rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-indigo-500/30 hover:bg-white/[0.03]"
+    >
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-white">
+          {title}
+        </h3>
+
+        <span className="text-indigo-400">→</span>
+      </div>
+
+      <p className="mt-2 text-sm leading-6 text-gray-500">
+        {description}
+      </p>
+    </Link>
+  );
+}
+
+function Modal({
+  title,
+  description,
+  children,
+  onClose,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0f15] text-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-white/10 bg-[#0b0f15] px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-white">
+              {title}
+            </h2>
+
+            <p className="mt-1 max-w-xl text-xs leading-5 text-gray-500">
+              {description}
             </p>
           </div>
 
           <button
-            onClick={() => setShowForm(!showForm)}
-            className="rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
+            type="button"
+            onClick={onClose}
+            className="ml-4 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xl leading-none text-gray-500 transition hover:bg-white/5 hover:text-white"
+            aria-label="Close modal"
           >
-            {showForm ? "Close" : "+ Add Opportunity"}
+            ×
           </button>
         </div>
 
-        {showForm && (
-          <div className="mb-8 rounded-3xl border border-white/10 bg-[#0c1016] p-6">
-            <h2 className="text-lg font-semibold">
-              Add Revenue Opportunity
-            </h2>
-
-            <p className="mt-1 text-sm text-gray-500">
-              Add a potential missed-revenue opportunity.
-            </p>
-
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-
-              <input
-                type="text"
-                placeholder="Customer name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-              />
-
-              <input
-                type="email"
-                placeholder="Customer email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-              />
-
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-                className="rounded-xl border border-white/10 bg-[#10151d] px-4 py-3 text-sm text-white outline-none focus:border-indigo-500"
-              >
-                <option value="missed_call">Missed call</option>
-                <option value="follow_up">Follow-up</option>
-                <option value="new_lead">New lead</option>
-                <option value="quote">Quote</option>
-                <option value="inquiry">Inquiry</option>
-              </select>
-
-              <input
-                type="number"
-                placeholder="Estimated value ($)"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-              />
-
-              <textarea
-                placeholder="Description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500 md:col-span-2"
-              />
-
-              <div className="flex justify-end md:col-span-2">
-                <button
-                  onClick={createOpportunity}
-                  disabled={saving}
-                  className="rounded-xl bg-indigo-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-50"
-                >
-                  {saving ? "Creating..." : "Create Opportunity"}
-                </button>
-              </div>
-
-            </div>
-          </div>
-        )}
-
-        {opportunities.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
-            <h2 className="text-xl font-semibold">
-              No opportunities yet
-            </h2>
-
-            <p className="mt-2 text-sm text-gray-500">
-              When Revora finds missed revenue, opportunities will appear here.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#0c1016]">
-
-            <div className="border-b border-white/10 p-6">
-              <div className="flex items-center justify-between">
-
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    Revenue Opportunities
-                  </h2>
-
-                  <p className="mt-1 text-xs text-gray-500">
-                    {opportunities.length}{" "}
-                    {opportunities.length === 1
-                      ? "opportunity"
-                      : "opportunities"}{" "}
-                    found
-                  </p>
-                </div>
-
-                <div className="rounded-xl bg-indigo-500/10 px-4 py-2 text-sm font-semibold text-indigo-400">
-                  $
-                  {opportunities
-                    .reduce(
-                      (total, opportunity) =>
-                        total +
-                        Number(opportunity.estimated_value),
-                      0
-                    )
-                    .toLocaleString()}
-                </div>
-
-              </div>
-            </div>
-
-            <div className="divide-y divide-white/10">
-
-              {opportunities.map((opportunity) => {
-                const customer = getCustomer(
-                  opportunity.customer_id
-                );
-
-                return (
-                  <div
-                    key={opportunity.id}
-                    className="p-6 transition hover:bg-white/[0.025]"
-                  >
-
-                    <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-
-                      <div className="flex items-start gap-4">
-
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-indigo-500/15 font-bold text-indigo-400">
-                          {customer?.name
-                            ?.split(" ")
-                            .map((word) => word[0])
-                            .join("")
-                            .slice(0, 2)
-                            .toUpperCase() || "C"}
-                        </div>
-
-                        <div>
-
-                          <h3 className="font-semibold">
-                            {customer?.name || "Unknown Customer"}
-                          </h3>
-
-                          <p className="mt-1 text-sm text-gray-500">
-                            {customer?.email || "No email"}
-                          </p>
-
-                          <div className="mt-3 flex flex-wrap gap-2">
-
-                            <span className="rounded-full bg-indigo-500/10 px-3 py-1 text-xs capitalize text-indigo-400">
-                              {opportunity.type.replaceAll("_", " ")}
-                            </span>
-
-                            <span className="rounded-full bg-white/5 px-3 py-1 text-xs capitalize text-gray-400">
-                              {opportunity.status}
-                            </span>
-
-                          </div>
-
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-6">
-
-                        <div>
-                          <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                            VALUE
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold">
-                            ${Number(
-                              opportunity.estimated_value
-                            ).toLocaleString()}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                            PRIORITY
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold text-emerald-500">
-                            {opportunity.priority_score}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                            PROBABILITY
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold text-indigo-400">
-                            {opportunity.probability_score}%
-                          </p>
-                        </div>
-
-                      </div>
-                    </div>
-
-                    <div className="mt-5 flex flex-wrap gap-2">
-
-                      {[
-                        "new",
-                        "contacting",
-                        "scheduled",
-                        "recovered",
-                        "lost",
-                      ].map((status) => (
-                        <button
-                          key={status}
-                          onClick={() =>
-                            updateStatus(
-                              opportunity.id,
-                              status
-                            )
-                          }
-                          className={`rounded-lg border px-3 py-2 text-xs capitalize transition ${
-                            opportunity.status === status
-                              ? "border-indigo-500 bg-indigo-500 text-white"
-                              : "border-white/10 text-gray-400 hover:bg-white/5"
-                          }`}
-                        >
-                          {status}
-                        </button>
-                      ))}
-
-                      <button
-                        onClick={() =>
-                          openFollowUp(opportunity)
-                        }
-                        className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-400 transition hover:bg-indigo-500/20"
-                      >
-                        + Schedule Follow-Up
-                      </button>
-
-                    </div>
-                  </div>
-                );
-              })}
-
-            </div>
-          </div>
-        )}
-
-        {followUpOpportunity && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-5">
-
-            <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#0c1016] p-6 shadow-2xl">
-
-              <div className="flex items-center justify-between">
-
-                <div>
-                  <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                    REVORA
-                  </p>
-
-                  <h2 className="mt-2 text-xl font-semibold">
-                    Schedule Follow-Up
-                  </h2>
-                </div>
-
-                <button
-                  onClick={() =>
-                    setFollowUpOpportunity(null)
-                  }
-                  className="rounded-lg px-3 py-2 text-gray-500 hover:bg-white/5 hover:text-white"
-                >
-                  ✕
-                </button>
-
-              </div>
-
-              <div className="mt-6 space-y-4">
-
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-gray-500">
-                    CUSTOMER
-                  </p>
-
-                  <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
-                    {getCustomer(
-                      followUpOpportunity.customer_id
-                    )?.name || "Unknown Customer"}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-gray-500">
-                    CHANNEL
-                  </p>
-
-                  <select
-                    value={followUpChannel}
-                    onChange={(e) =>
-                      setFollowUpChannel(e.target.value)
-                    }
-                    className="w-full rounded-xl border border-white/10 bg-[#10151d] px-4 py-3 text-sm text-white outline-none focus:border-indigo-500"
-                  >
-                    <option value="email">Email</option>
-                    <option value="call">Call</option>
-                    <option value="whatsapp">WhatsApp</option>
-                  </select>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-gray-500">
-                    SCHEDULED AT
-                  </p>
-
-                  <input
-                    type="datetime-local"
-                    value={followUpDate}
-                    onChange={(e) =>
-                      setFollowUpDate(e.target.value)
-                    }
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs font-semibold text-gray-500">
-                    MESSAGE
-                  </p>
-
-                  <textarea
-                    value={followUpMessage}
-                    onChange={(e) =>
-                      setFollowUpMessage(e.target.value)
-                    }
-                    rows={5}
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-                  />
-                </div>
-
-                <button
-                  onClick={createFollowUp}
-                  disabled={followUpSaving}
-                  className="w-full rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:opacity-50"
-                >
-                  {followUpSaving
-                    ? "Scheduling..."
-                    : "Schedule Follow-Up"}
-                </button>
-
-              </div>
-            </div>
-          </div>
-        )}
-
+        <div className="p-6">{children}</div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+function ModalError({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
+      {message}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-medium text-gray-400">
+        {label}
+      </span>
+
+      {children}
+    </label>
+  );
+}
+
+function ModalActions({
+  onCancel,
+  saving,
+  submitLabel,
+}: {
+  onCancel: () => void;
+  saving: boolean;
+  submitLabel: string;
+}) {
+  return (
+    <div className="flex flex-col-reverse gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={saving}
+        className="rounded-xl border border-white/10 px-5 py-3 text-xs font-semibold text-gray-400 transition hover:bg-white/5 disabled:opacity-50"
+      >
+        Cancel
+      </button>
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="rounded-xl bg-indigo-500 px-5 py-3 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving ? "Saving..." : submitLabel}
+      </button>
+    </div>
   );
 }

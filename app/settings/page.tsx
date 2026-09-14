@@ -1,21 +1,22 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "../../lib/supabase";
+import { useEffect, useState } from "react";
+import Sidebar from "@/components/Sidebar";
+import { createClient } from "@/lib/supabase";
+import {
+  loadWorkspaceData,
+  refreshWorkspaceData,
+} from "@/lib/workspace";
 
-type Business = {
-  id: string;
-  name: string;
-  email_notifications: boolean;
-  recovery_alerts: boolean;
+type WorkspaceSettings = {
+  emailNotifications: boolean;
+  recoveryAlerts: boolean;
 };
 
 export default function SettingsPage() {
-  const supabase = useMemo(() => createClient(), []);
-
-  const [business, setBusiness] = useState<Business | null>(null);
-  const [userEmail, setUserEmail] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [settings, setSettings] =
+    useState<WorkspaceSettings | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -23,16 +24,22 @@ export default function SettingsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const [businessName, setBusinessName] = useState("");
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [recoveryAlerts, setRecoveryAlerts] = useState(true);
-
   useEffect(() => {
-    async function loadSettings() {
-      setLoading(true);
-      setError("");
+    let active = true;
 
+    async function loadSettings() {
       try {
+        setLoading(true);
+        setError("");
+
+        const supabase = createClient();
+
+        const workspace = await loadWorkspaceData();
+
+        if (!active) return;
+
+        setBusinessName(workspace.businessName || "");
+
         const {
           data: { user },
           error: userError,
@@ -43,522 +50,338 @@ export default function SettingsPage() {
         }
 
         if (!user) {
-          window.location.href = "/login";
-          return;
+          throw new Error("You must be signed in.");
         }
 
-        setUserEmail(user.email ?? "");
-
-        const { data: profile, error: profileError } = await supabase
+        const {
+          data: profile,
+          error: profileError,
+        } = await supabase
           .from("profiles")
           .select("business_id")
           .eq("id", user.id)
-          .single();
+          .maybeSingle();
 
         if (profileError) {
-          throw new Error(`Profile error: ${profileError.message}`);
+          throw profileError;
         }
 
         if (!profile?.business_id) {
           throw new Error(
-            "Your account is not connected to a business workspace yet."
+            "No business is associated with your account.",
           );
         }
 
-        const { data: businessData, error: businessError } = await supabase
+        const {
+          data: business,
+          error: businessError,
+        } = await supabase
           .from("businesses")
           .select(
-            "id, name, email_notifications, recovery_alerts"
+            "email_notifications,recovery_alerts",
           )
           .eq("id", profile.business_id)
-          .single();
+          .maybeSingle();
 
         if (businessError) {
-          throw new Error(`Business error: ${businessError.message}`);
+          throw businessError;
         }
 
-        const loadedBusiness: Business = {
-          id: businessData.id,
-          name: businessData.name,
-          email_notifications:
-            businessData.email_notifications ?? true,
-          recovery_alerts:
-            businessData.recovery_alerts ?? true,
-        };
+        if (!active) return;
 
-        setBusiness(loadedBusiness);
-        setBusinessName(loadedBusiness.name);
-        setEmailNotifications(loadedBusiness.email_notifications);
-        setRecoveryAlerts(loadedBusiness.recovery_alerts);
+        setSettings({
+          emailNotifications:
+            business?.email_notifications ?? true,
+          recoveryAlerts:
+            business?.recovery_alerts ?? true,
+        });
       } catch (err) {
-        console.error(err);
+        if (!active) return;
 
         setError(
           err instanceof Error
             ? err.message
-            : "Something went wrong while loading Settings."
+            : "Unable to load workspace settings.",
         );
+
+        setSettings(null);
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
 
-    loadSettings();
-  }, [supabase]);
+    void loadSettings();
 
-  const getInitials = (name: string) => {
-    const trimmed = name.trim();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-    if (!trimmed) {
-      return "RV";
-    }
-
-    const parts = trimmed.split(/\s+/);
-
-    if (parts.length === 1) {
-      return parts[0].slice(0, 2).toUpperCase();
-    }
-
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  };
-
-  const saveSettings = async () => {
-    if (!business) return;
-
-    if (!businessName.trim()) {
-      setError("Business name cannot be empty.");
-      setMessage("");
-      return;
-    }
-
-    setSaving(true);
+  async function handleSave() {
     setMessage("");
     setError("");
 
-    try {
-      const { data: updatedBusiness, error: updateError } =
-        await supabase
-          .from("businesses")
-          .update({
-            name: businessName.trim(),
-            email_notifications: emailNotifications,
-            recovery_alerts: recoveryAlerts,
-          })
-          .eq("id", business.id)
-          .select(
-            "id, name, email_notifications, recovery_alerts"
-          )
-          .single();
+    if (!settings) {
+      setError("Settings are still loading.");
+      return;
+    }
 
-      if (updateError) {
-        throw updateError;
+    const trimmedName = businessName.trim();
+
+    if (!trimmedName) {
+      setError("Workspace name cannot be empty.");
+      return;
+    }
+
+    if (trimmedName.length > 100) {
+      setError(
+        "Workspace name must be 100 characters or less.",
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const supabase = createClient();
+
+      const {
+        data: updatedBusiness,
+        error: nameError,
+      } = await supabase.rpc(
+        "update_my_business_name",
+        {
+          new_name: trimmedName,
+        },
+      );
+
+      if (nameError) {
+        throw nameError;
       }
 
       if (!updatedBusiness) {
         throw new Error(
-          "Settings were not updated. Please check your database permissions."
+          "Supabase returned no updated business.",
         );
       }
 
-      const savedBusiness: Business = {
-        id: updatedBusiness.id,
-        name: updatedBusiness.name,
-        email_notifications:
-          updatedBusiness.email_notifications ?? true,
-        recovery_alerts:
-          updatedBusiness.recovery_alerts ?? true,
-      };
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-      setBusiness(savedBusiness);
-      setBusinessName(savedBusiness.name);
-      setEmailNotifications(savedBusiness.email_notifications);
-      setRecoveryAlerts(savedBusiness.recovery_alerts);
+      if (userError) {
+        throw userError;
+      }
+
+      if (!user) {
+        throw new Error("You must be signed in.");
+      }
+
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("profiles")
+        .select("business_id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      if (!profile?.business_id) {
+        throw new Error(
+          "No business is associated with your account.",
+        );
+      }
+
+      const {
+        error: settingsError,
+      } = await supabase
+        .from("businesses")
+        .update({
+          email_notifications:
+            settings.emailNotifications,
+          recovery_alerts:
+            settings.recoveryAlerts,
+        })
+        .eq("id", profile.business_id);
+
+      if (settingsError) {
+        throw settingsError;
+      }
 
       setMessage("Settings saved successfully.");
-    } catch (err) {
-      console.error(err);
 
+      refreshWorkspaceData();
+
+      window.dispatchEvent(
+        new Event("workspaceUpdated"),
+      );
+    } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Could not save settings."
+          : "Unexpected error while saving.",
       );
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   return (
-    <main className="min-h-screen bg-[#07090d] text-white">
+    <main className="min-h-screen bg-[#070a0f] text-white">
       <div className="flex min-h-screen">
+        <Sidebar />
 
-        {/* SIDEBAR */}
-        <aside className="hidden w-[250px] shrink-0 border-r border-white/10 bg-[#0a0d12] p-6 lg:block">
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+            <div className="mb-8">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
+                WORKSPACE CONTROL
+              </p>
 
-          {/* LOGO */}
-          <div className="mb-10">
-            <div className="flex items-center gap-3">
+              <h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em]">
+                Settings
+              </h1>
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white font-black text-black">
-                R
-              </div>
-
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">
-                  REVORA
-                </h1>
-
-                <p className="text-xs text-gray-500">
-                  Revenue Recovery
-                </p>
-              </div>
-
-            </div>
-          </div>
-
-          {/* NAVIGATION */}
-          <nav className="space-y-1.5">
-
-            <Link
-              href="/"
-              className="block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Dashboard
-            </Link>
-
-            <Link
-              href="/opportunities"
-              className="block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Opportunities
-            </Link>
-
-            <Link
-              href="/ai-recovery"
-              className="block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              AI Recovery
-            </Link>
-
-            <Link
-              href="/follow-ups"
-              className="block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              Follow-Ups
-            </Link>
-
-            <Link
-              href="/roi"
-              className="block w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-400 transition hover:bg-white/5 hover:text-white"
-            >
-              ROI
-            </Link>
-
-            <Link
-              href="/settings"
-              className="block w-full rounded-xl bg-white px-4 py-3 text-left text-sm font-medium text-black"
-            >
-              Settings
-            </Link>
-
-          </nav>
-
-          {/* WORKSPACE */}
-          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-
-            <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">
-              WORKSPACE
-            </p>
-
-            <div className="mt-4 flex items-center gap-3">
-
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                {business ? getInitials(business.name) : "RV"}
-              </div>
-
-              <div className="min-w-0">
-
-                <p className="truncate text-sm font-semibold">
-                  {business?.name || "Loading..."}
-                </p>
-
-                <p className="truncate text-xs text-gray-500">
-                  Business workspace
-                </p>
-
-              </div>
-
-            </div>
-          </div>
-
-          {/* SYSTEM */}
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-
-            <div className="flex items-center justify-between">
-
-              <span className="text-xs text-gray-500">
-                System
-              </span>
-
-              <span className="flex items-center gap-1.5 text-xs text-emerald-500">
-
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-
-                Operational
-
-              </span>
-
+              <p className="mt-2 text-sm text-gray-500">
+                Manage your Revora workspace and notification preferences.
+              </p>
             </div>
 
-          </div>
-
-        </aside>
-
-        {/* MAIN */}
-        <section className="min-w-0 flex-1">
-
-          {/* HEADER */}
-          <header className="flex h-[72px] items-center justify-between border-b border-white/10 bg-[#07090d] px-5 sm:px-6 lg:px-10">
-
-            <p className="text-sm font-medium text-gray-500">
-              Settings
-            </p>
-
-            <div
-              title={userEmail}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold text-white"
-            >
-              {business ? getInitials(business.name) : "RV"}
-            </div>
-
-          </header>
-
-          {/* CONTENT */}
-          <div className="mx-auto max-w-[1000px] px-5 py-8 sm:px-6 lg:px-10 lg:py-10">
-
-            {/* LOADING */}
-            {loading && (
-              <div className="flex min-h-[500px] items-center justify-center">
-
-                <div className="text-center">
-
-                  <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
-
-                  <p className="text-sm text-gray-500">
-                    Loading Settings...
-                  </p>
-
-                </div>
-
+            {error && (
+              <div className="mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/5 px-5 py-4 text-sm font-medium text-rose-300">
+                {error}
               </div>
             )}
 
-            {/* ERROR */}
-            {!loading && error && !business && (
-              <div className="rounded-3xl border border-red-500/20 bg-red-500/5 p-8">
+            {message && (
+              <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-4 text-sm font-medium text-emerald-400">
+                <span>✓ {message}</span>
 
-                <p className="text-xs font-semibold uppercase tracking-wider text-red-500">
-                  Settings Error
-                </p>
+                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider">
+                  Saved
+                </span>
+              </div>
+            )}
 
-                <h2 className="mt-2 text-xl font-semibold">
-                  Could not load Settings
+            <section className="rounded-3xl border border-white/10 bg-white/[0.025]">
+              <div className="border-b border-white/10 px-5 py-5 sm:px-6">
+                <h2 className="text-base font-semibold">
+                  Workspace
                 </h2>
 
-                <p className="mt-3 text-sm text-gray-500">
-                  {error}
+                <p className="mt-1 text-sm text-gray-500">
+                  Update the business workspace name.
                 </p>
+              </div>
+
+              <div className="p-5 sm:p-6">
+                <label
+                  htmlFor="businessName"
+                  className="text-sm font-medium text-gray-300"
+                >
+                  Workspace name
+                </label>
+
+                <input
+                  id="businessName"
+                  type="text"
+                  value={businessName}
+                  onChange={(event) =>
+                    setBusinessName(event.target.value)
+                  }
+                  disabled={loading || saving}
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-[#0b0f16] px-4 py-3 text-sm text-white outline-none transition placeholder:text-gray-700 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/10 disabled:opacity-60"
+                />
+              </div>
+            </section>
+
+            <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.025]">
+              <div className="border-b border-white/10 px-5 py-5 sm:px-6">
+                <h2 className="text-base font-semibold">
+                  Notifications
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Choose which Revora alerts your workspace receives.
+                </p>
+              </div>
+
+              {settings === null ? (
+                <div className="p-6">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-4 text-sm text-gray-500">
+                    Loading notification settings...
+                  </div>
+                </div>
+              ) : (
+                <div className="divide-y divide-white/10">
+                  <ToggleRow
+                    title="Email Notifications"
+                    description="Receive important workspace updates and notification emails."
+                    enabled={settings.emailNotifications}
+                    disabled={saving}
+                    onChange={(value) =>
+                      setSettings((current) => ({
+                        ...current!,
+                        emailNotifications: value,
+                      }))
+                    }
+                  />
+
+                  <ToggleRow
+                    title="Recovery Alerts"
+                    description="Get notified when Revora identifies recovery opportunities that need attention."
+                    enabled={settings.recoveryAlerts}
+                    disabled={saving}
+                    onChange={(value) =>
+                      setSettings((current) => ({
+                        ...current!,
+                        recoveryAlerts: value,
+                      }))
+                    }
+                  />
+                </div>
+              )}
+            </section>
+
+            <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.02] p-4 sm:p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    Workspace changes
+                  </p>
+
+                  <p className="mt-1 text-xs leading-5 text-gray-500">
+                    Save the workspace name and notification preferences together.
+                  </p>
+                </div>
 
                 <button
                   type="button"
-                  onClick={() => window.location.reload()}
-                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
+                  onClick={handleSave}
+                  disabled={
+                    loading ||
+                    saving ||
+                    !settings
+                  }
+                  className="rounded-xl bg-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/10 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Try again
+                  {loading
+                    ? "Loading..."
+                    : saving
+                      ? "Saving..."
+                      : "Save changes"}
                 </button>
-
               </div>
-            )}
-
-            {/* SETTINGS */}
-            {!loading && business && (
-              <>
-
-                {/* HERO */}
-                <div className="mb-10">
-
-                  <div className="mb-4 flex items-center gap-2">
-
-                    <span className="h-2 w-2 rounded-full bg-indigo-500" />
-
-                    <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                      WORKSPACE SETTINGS
-                    </p>
-
-                  </div>
-
-                  <h2 className="max-w-4xl text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl">
-
-                    Configure your
-                    <br />
-
-                    Revora workspace.
-
-                  </h2>
-
-                  <p className="mt-5 max-w-2xl text-sm leading-6 text-gray-500">
-                    Manage your business workspace and recovery preferences.
-                  </p>
-
-                </div>
-
-                {/* BUSINESS SETTINGS */}
-                <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 sm:p-8">
-
-                  <div className="border-b border-white/10 pb-6">
-
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                      BUSINESS
-                    </p>
-
-                    <h3 className="mt-2 text-xl font-semibold">
-                      Business workspace
-                    </h3>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Update the name displayed across Revora.
-                    </p>
-
-                  </div>
-
-                  {/* BUSINESS NAME */}
-                  <div className="mt-6">
-
-                    <label className="text-sm font-medium text-gray-300">
-                      Business name
-                    </label>
-
-                    <input
-                      type="text"
-                      value={businessName}
-                      onChange={(event) => {
-                        setBusinessName(event.target.value);
-                        setMessage("");
-                        setError("");
-                      }}
-                      className="mt-2 w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-indigo-500"
-                      placeholder="Your business name"
-                    />
-
-                  </div>
-
-                  {/* EMAIL */}
-                  <div className="mt-5">
-
-                    <label className="text-sm font-medium text-gray-300">
-                      Account email
-                    </label>
-
-                    <input
-                      type="email"
-                      value={userEmail}
-                      disabled
-                      className="mt-2 w-full cursor-not-allowed rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-sm text-gray-500"
-                    />
-
-                  </div>
-
-                </div>
-
-                {/* RECOVERY SETTINGS */}
-                <div className="mt-6 rounded-3xl border border-white/10 bg-[#0c1016] p-6 sm:p-8">
-
-                  <div className="border-b border-white/10 pb-6">
-
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                      RECOVERY
-                    </p>
-
-                    <h3 className="mt-2 text-xl font-semibold">
-                      Recovery preferences
-                    </h3>
-
-                    <p className="mt-1 text-sm text-gray-500">
-                      Control the notifications used by your recovery workflow.
-                    </p>
-
-                  </div>
-
-                  <div className="mt-6 space-y-5">
-
-                    <ToggleRow
-                      title="Email notifications"
-                      description="Receive important Revora account and workspace notifications."
-                      enabled={emailNotifications}
-                      onChange={() => {
-                        setEmailNotifications((current) => !current);
-                        setMessage("");
-                        setError("");
-                      }}
-                    />
-
-                    <ToggleRow
-                      title="Recovery alerts"
-                      description="Get alerts when high-priority revenue opportunities need attention."
-                      enabled={recoveryAlerts}
-                      onChange={() => {
-                        setRecoveryAlerts((current) => !current);
-                        setMessage("");
-                        setError("");
-                      }}
-                    />
-
-                  </div>
-
-                </div>
-
-                {/* SAVE */}
-                <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
-                  <div className="min-h-[24px]">
-
-                    {message && (
-                      <p className="text-sm font-medium text-emerald-500">
-                        {message}
-                      </p>
-                    )}
-
-                    {error && business && (
-                      <p className="text-sm font-medium text-red-500">
-                        {error}
-                      </p>
-                    )}
-
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={saveSettings}
-                    disabled={saving}
-                    className="rounded-xl bg-indigo-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {saving ? "Saving..." : "Save Settings"}
-                  </button>
-
-                </div>
-
-                {/* FOOTER */}
-                <footer className="py-8 text-center text-xs text-gray-500">
-                  REVORA · Workspace Settings
-                </footer>
-
-              </>
-            )}
-
+            </div>
           </div>
-
-        </section>
-
+        </main>
       </div>
     </main>
   );
@@ -568,46 +391,61 @@ function ToggleRow({
   title,
   description,
   enabled,
+  disabled,
   onChange,
 }: {
   title: string;
   description: string;
   enabled: boolean;
-  onChange: () => void;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-6 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+    <div className="flex items-center justify-between gap-5 px-5 py-5 sm:px-6">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-white">
+            {title}
+          </h3>
 
-      <div>
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${
+              enabled
+                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                : "border-white/10 bg-white/5 text-gray-500"
+            }`}
+          >
+            {enabled ? "On" : "Off"}
+          </span>
+        </div>
 
-        <p className="text-sm font-semibold">
-          {title}
-        </p>
-
-        <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">
+        <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-500">
           {description}
         </p>
-
       </div>
 
       <button
         type="button"
-        onClick={onChange}
-        aria-label={`Toggle ${title}`}
-        aria-pressed={enabled}
-        className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-          enabled ? "bg-indigo-500" : "bg-white/10"
+        role="switch"
+        aria-checked={enabled}
+        disabled={disabled}
+        onClick={() => onChange(!enabled)}
+        className={`relative h-7 w-12 shrink-0 rounded-full border transition ${
+          enabled
+            ? "border-indigo-400/40 bg-indigo-500 shadow-[0_0_16px_rgba(99,102,241,0.2)]"
+            : "border-white/10 bg-white/[0.06]"
+        } ${
+          disabled
+            ? "cursor-not-allowed opacity-50"
+            : "cursor-pointer"
         }`}
       >
-
         <span
-          className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
+          className={`absolute top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-sm transition ${
             enabled ? "left-6" : "left-1"
           }`}
         />
-
       </button>
-
     </div>
   );
 }
