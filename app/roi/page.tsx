@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  FormEvent,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase";
 import Sidebar from "@/components/Sidebar";
 
@@ -26,48 +21,18 @@ type RevenueEvent = {
   occurred_at: string | null;
 };
 
-type RevenueForm = {
-  opportunityId: string;
-  amount: string;
-  source: string;
-  occurredAt: string;
-};
-
-const defaultRevenueForm: RevenueForm = {
-  opportunityId: "",
-  amount: "",
-  source: "Follow-up",
-  occurredAt: "",
-};
-
 export default function ROIPage() {
   const supabase = useMemo(() => createClient(), []);
 
-  const [opportunities, setOpportunities] = useState<
-    Opportunity[]
-  >([]);
-
-  const [revenueEvents, setRevenueEvents] = useState<
-    RevenueEvent[]
-  >([]);
-
-  const [businessName, setBusinessName] = useState(
-    "Business workspace",
-  );
-
-  const [businessId, setBusinessId] = useState("");
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [revenueEvents, setRevenueEvents] = useState<RevenueEvent[]>([]);
+  const [businessName, setBusinessName] = useState("Business workspace");
+  const [businessId, setBusinessId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const [showRevenueModal, setShowRevenueModal] =
-    useState(false);
-
-  const [savingRevenue, setSavingRevenue] =
-    useState(false);
-
-  const [revenueForm, setRevenueForm] =
-    useState<RevenueForm>(defaultRevenueForm);
+  const [success, setSuccess] = useState("");
+  const [recoveringId, setRecoveringId] = useState<string | null>(null);
 
   useEffect(() => {
     void loadROI();
@@ -106,9 +71,7 @@ export default function ROIPage() {
       }
 
       if (!profile?.business_id) {
-        throw new Error(
-          "No business workspace found.",
-        );
+        throw new Error("No business workspace found.");
       }
 
       setBusinessId(profile.business_id);
@@ -183,230 +146,163 @@ export default function ROIPage() {
     }
   }
 
-  function formatCurrency(value: number) {
-    return `$${Math.round(value).toLocaleString("en-US")}`;
-  }
+  async function recordRecovery(opportunity: Opportunity) {
+    if (recoveringId) return;
 
-  function getNowLocalInputValue() {
-    const now = new Date();
-
-    const offset =
-      now.getTimezoneOffset() * 60 * 1000;
-
-    return new Date(now.getTime() - offset)
-      .toISOString()
-      .slice(0, 16);
-  }
-
-  function openRevenueModal(opportunityId = "") {
     setError("");
-
-    const selected =
-      opportunities.find(
-        (opportunity) =>
-          opportunity.id === opportunityId,
-      ) ?? null;
-
-    setRevenueForm({
-      opportunityId,
-      amount:
-        selected?.estimated_value != null
-          ? String(selected.estimated_value)
-          : "",
-      source: "Follow-up",
-      occurredAt: getNowLocalInputValue(),
-    });
-
-    setShowRevenueModal(true);
-  }
-
-  function closeRevenueModal() {
-    if (savingRevenue) {
-      return;
-    }
-
-    setShowRevenueModal(false);
-    setRevenueForm(defaultRevenueForm);
-    setError("");
-  }
-
-  /*
-   * IMPORTANT:
-   *
-   * The database already has an AFTER UPDATE trigger:
-   *
-   * opportunities.status = "recovered"
-   *        ↓
-   * record_recovered_revenue()
-   *        ↓
-   * revenue_events INSERT
-   *
-   * Therefore this function MUST NOT insert into
-   * revenue_events directly.
-   *
-   * It only changes the opportunity status.
-   */
-  async function recordRevenue(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
-    setError("");
+    setSuccess("");
 
     if (!businessId) {
-      setError(
-        "Business information is not available.",
-      );
+      setError("Business information is not available.");
       return;
     }
 
-    if (!revenueForm.opportunityId) {
-      setError("Please select an opportunity.");
+    if (opportunity.status === "recovered") {
+      setError("This opportunity has already been recovered.");
       return;
     }
 
-    setSavingRevenue(true);
+    const recoveryValue = Number(opportunity.estimated_value || 0);
+
+    if (recoveryValue <= 0) {
+      setError("This opportunity has no recoverable revenue value.");
+      return;
+    }
+
+    setRecoveringId(opportunity.id);
 
     try {
-      const opportunity =
-        opportunities.find(
-          (item) =>
-            item.id === revenueForm.opportunityId,
-        );
-
-      if (!opportunity) {
-        throw new Error(
-          "Selected opportunity could not be found.",
-        );
-      }
-
-      if (
-        ["recovered", "closed", "lost"].includes(
-          opportunity.status,
+      // The existing database trigger creates the revenue_events row
+      // whenever the opportunity changes to "recovered".
+      const {
+        data: updatedOpportunity,
+        error: updateError,
+      } = await supabase
+        .from("opportunities")
+        .update({
+          status: "recovered",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", opportunity.id)
+        .eq("business_id", businessId)
+        .neq("status", "recovered")
+        .select(
+          "id, title, estimated_value, priority_score, probability_score, status",
         )
-      ) {
-        throw new Error(
-          "This opportunity is already closed.",
-        );
-      }
-
-      const { error: updateError } =
-        await supabase
-          .from("opportunities")
-          .update({
-            status: "recovered",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", opportunity.id)
-          .eq("business_id", businessId);
+        .single();
 
       if (updateError) {
+        const message = updateError.message.toLowerCase();
+
+        if (
+          message.includes("unique") &&
+          message.includes("revenue_events")
+        ) {
+          throw new Error(
+            "Recovery revenue for this opportunity has already been recorded.",
+          );
+        }
+
         throw new Error(
-          `Opportunity update error: ${updateError.message}`,
+          `Recovery failed: ${updateError.message}`,
         );
       }
 
-      setShowRevenueModal(false);
-      setRevenueForm(defaultRevenueForm);
-      setError("");
+      if (!updatedOpportunity) {
+        throw new Error(
+          "Recovery failed: Revora did not return the updated opportunity.",
+        );
+      }
 
+      if (updatedOpportunity.status !== "recovered") {
+        throw new Error(
+          "Recovery failed: the opportunity was not marked as recovered.",
+        );
+      }
+
+      // Reload both opportunities and revenue events so ROI updates immediately.
       await loadROI();
-    } catch (err) {
-      console.error(
-        "REVENUE RECORD ERROR:",
-        err,
+
+      setSuccess(
+        `${opportunity.title || "Opportunity"} recovered successfully. ${formatCurrency(
+          recoveryValue,
+        )} was added to recovered revenue.`,
       );
+    } catch (err) {
+      console.error("Record recovery error:", err);
 
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to record recovered revenue.",
+          : "Unable to record recovered revenue.",
       );
     } finally {
-      setSavingRevenue(false);
+      setRecoveringId(null);
     }
   }
 
-  const activeOpportunities =
-    opportunities.filter(
-      (opportunity) =>
-        ![
-          "recovered",
-          "closed",
-          "lost",
-        ].includes(opportunity.status),
-    );
+  function formatCurrency(value: number) {
+    return `$${Math.round(value).toLocaleString()}`;
+  }
+
+  const activeOpportunities = opportunities.filter(
+    (opportunity) =>
+      !["recovered", "closed", "lost"].includes(
+        opportunity.status,
+      ),
+  );
 
   const totalPotentialRevenue =
     activeOpportunities.reduce(
       (total, opportunity) =>
-        total +
-        Number(
-          opportunity.estimated_value || 0,
-        ),
+        total + Number(opportunity.estimated_value || 0),
       0,
     );
 
-  const recoveredRevenue =
-    revenueEvents.reduce(
-      (total, event) =>
-        total +
-        Number(event.amount || 0),
-      0,
-    );
+  const recoveredRevenue = revenueEvents.reduce(
+    (total, event) =>
+      total + Number(event.amount || 0),
+    0,
+  );
 
   const totalIdentifiedRevenue =
     opportunities.reduce(
       (total, opportunity) =>
-        total +
-        Number(
-          opportunity.estimated_value || 0,
-        ),
+        total + Number(opportunity.estimated_value || 0),
       0,
     );
 
-  const expectedRevenue =
-    activeOpportunities.reduce(
-      (total, opportunity) => {
-        const value = Number(
-          opportunity.estimated_value || 0,
-        );
+  const expectedRevenue = activeOpportunities.reduce(
+    (total, opportunity) => {
+      const value = Number(
+        opportunity.estimated_value || 0,
+      );
 
-        const probability = Number(
-          opportunity.probability_score || 0,
-        );
+      const probability = Number(
+        opportunity.probability_score || 0,
+      );
 
-        return (
-          total +
-          value * (probability / 100)
-        );
-      },
-      0,
-    );
+      return total + value * (probability / 100);
+    },
+    0,
+  );
 
-  const activePipeline =
-    activeOpportunities.reduce(
-      (total, opportunity) =>
-        total +
-        Number(
-          opportunity.estimated_value || 0,
-        ),
-      0,
-    );
+  const activePipeline = activeOpportunities.reduce(
+    (total, opportunity) =>
+      total + Number(opportunity.estimated_value || 0),
+    0,
+  );
 
   const highPriorityCount =
     activeOpportunities.filter(
       (opportunity) =>
-        Number(
-          opportunity.priority_score || 0,
-        ) >= 70,
+        Number(opportunity.priority_score || 0) >= 70,
     ).length;
 
   const recoveryRate =
     totalIdentifiedRevenue > 0
       ? Math.min(
-          (recoveredRevenue /
-            totalIdentifiedRevenue) *
-            100,
+          (recoveredRevenue / totalIdentifiedRevenue) * 100,
           100,
         )
       : 0;
@@ -440,34 +336,34 @@ export default function ROIPage() {
 
         <div className="min-w-0 flex-1">
           <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-12">
-
             {/* HEADER */}
-            <div className="mb-8 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                  REVORA · REVENUE INTELLIGENCE
+            <div className="mb-8">
+              <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
+                REVORA · REVENUE INTELLIGENCE
+              </p>
+
+              <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+                ROI
+              </h1>
+
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
+                Measure the revenue Revora is identifying and recovering for{" "}
+                {businessName}.
+              </p>
+            </div>
+
+            {/* SUCCESS */}
+            {success && (
+              <div className="mb-5 rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                  Recovery recorded
                 </p>
 
-                <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-                  ROI
-                </h1>
-
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-                  Measure the revenue Revora is identifying and recovering for{" "}
-                  {businessName}.
+                <p className="mt-2 text-sm text-gray-300">
+                  {success}
                 </p>
               </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  openRevenueModal()
-                }
-                className="w-full rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 sm:w-auto"
-              >
-                + Record Recovered Revenue
-              </button>
-            </div>
+            )}
 
             {/* ERROR */}
             {error && (
@@ -476,7 +372,7 @@ export default function ROIPage() {
                   ROI Error
                 </p>
 
-                <p className="mt-2 break-words text-sm text-gray-300">
+                <p className="mt-2 text-sm text-gray-400">
                   {error}
                 </p>
 
@@ -680,30 +576,22 @@ export default function ROIPage() {
                       opportunities.map(
                         (opportunity, index) => {
                           const value = Number(
-                            opportunity.estimated_value ||
-                              0,
+                            opportunity.estimated_value || 0,
                           );
 
                           const probability =
                             Number(
-                              opportunity.probability_score ||
-                                0,
+                              opportunity.probability_score || 0,
                             );
 
                           const isInactive =
-                            opportunity.status ===
-                              "recovered" ||
-                            opportunity.status ===
-                              "lost" ||
-                            opportunity.status ===
-                              "closed";
+                            opportunity.status === "recovered" ||
+                            opportunity.status === "lost" ||
+                            opportunity.status === "closed";
 
-                          const expected =
-                            isInactive
-                              ? 0
-                              : value *
-                                (probability /
-                                  100);
+                          const expected = isInactive
+                            ? 0
+                            : value * (probability / 100);
 
                           const opportunityRecovered =
                             revenueEvents
@@ -713,30 +601,26 @@ export default function ROIPage() {
                                   opportunity.id,
                               )
                               .reduce(
-                                (
-                                  total,
-                                  event,
-                                ) =>
+                                (total, event) =>
                                   total +
                                   Number(
-                                    event.amount ||
-                                      0,
+                                    event.amount || 0,
                                   ),
                                 0,
                               );
 
+                          const isRecovering =
+                            recoveringId === opportunity.id;
+
                           return (
                             <div
-                              key={
-                                opportunity.id
-                              }
+                              key={opportunity.id}
                               className="p-6 transition hover:bg-white/[0.025]"
                             >
                               <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
                                 <div className="min-w-0">
                                   <p className="text-xs text-gray-500">
-                                    Opportunity #
-                                    {index + 1}
+                                    Opportunity #{index + 1}
                                   </p>
 
                                   <h3 className="mt-1 font-semibold text-white">
@@ -750,68 +634,74 @@ export default function ROIPage() {
                                       " ",
                                     )}
                                   </p>
-
-                                  {!isInactive && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        openRevenueModal(
-                                          opportunity.id,
-                                        )
-                                      }
-                                      className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/10"
-                                    >
-                                      Record Recovery
-                                    </button>
-                                  )}
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      VALUE
-                                    </p>
+                                <div className="flex flex-col gap-5 lg:items-end">
+                                  <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                                    <div>
+                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                        VALUE
+                                      </p>
 
-                                    <p className="mt-1 text-lg font-semibold">
-                                      {formatCurrency(
-                                        value,
-                                      )}
-                                    </p>
+                                      <p className="mt-1 text-lg font-semibold">
+                                        {formatCurrency(value)}
+                                      </p>
+                                    </div>
+
+                                    <div>
+                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                        PROBABILITY
+                                      </p>
+
+                                      <p className="mt-1 text-lg font-semibold text-indigo-400">
+                                        {probability}%
+                                      </p>
+                                    </div>
+
+                                    <div>
+                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                        EXPECTED
+                                      </p>
+
+                                      <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                        {formatCurrency(expected)}
+                                      </p>
+                                    </div>
+
+                                    <div>
+                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                        RECOVERED
+                                      </p>
+
+                                      <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                        {formatCurrency(
+                                          opportunityRecovered,
+                                        )}
+                                      </p>
+                                    </div>
                                   </div>
 
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      PROBABILITY
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-indigo-400">
-                                      {probability}%
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      EXPECTED
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-emerald-400">
-                                      {formatCurrency(
-                                        expected,
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                      RECOVERED
-                                    </p>
-
-                                    <p className="mt-1 text-lg font-semibold text-emerald-400">
-                                      {formatCurrency(
-                                        opportunityRecovered,
-                                      )}
-                                    </p>
-                                  </div>
+                                  {!isInactive ? (
+                                    <button
+                                      type="button"
+                                      disabled={Boolean(recoveringId)}
+                                      onClick={() =>
+                                        void recordRecovery(
+                                          opportunity,
+                                        )
+                                      }
+                                      className="w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                                    >
+                                      {isRecovering
+                                        ? "Recording Recovery..."
+                                        : "Record Recovery"}
+                                    </button>
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
+                                      <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                                      Recovered
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -846,39 +736,33 @@ export default function ROIPage() {
                     </div>
                   ) : (
                     <div className="divide-y divide-white/10">
-                      {revenueEvents.map(
-                        (event) => (
-                          <div
-                            key={event.id}
-                            className="flex flex-col gap-3 p-6 sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div>
-                              <p className="text-sm font-semibold">
-                                {formatCurrency(
-                                  Number(
-                                    event.amount ||
-                                      0,
-                                  ),
-                                )}
-                              </p>
+                      {revenueEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="flex flex-col gap-3 p-6 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold">
+                              {formatCurrency(
+                                Number(event.amount || 0),
+                              )}
+                            </p>
 
-                              <p className="mt-1 text-xs text-gray-500">
-                                Source:{" "}
-                                {event.source ||
-                                  "recovery"}
-                              </p>
-                            </div>
-
-                            <p className="text-xs text-gray-500">
-                              {event.occurred_at
-                                ? new Date(
-                                    event.occurred_at,
-                                  ).toLocaleString()
-                                : "No date"}
+                            <p className="mt-1 text-xs text-gray-500">
+                              Source:{" "}
+                              {event.source || "Unknown"}
                             </p>
                           </div>
-                        ),
-                      )}
+
+                          <p className="text-xs text-gray-500">
+                            {event.occurred_at
+                              ? new Date(
+                                  event.occurred_at,
+                                ).toLocaleString()
+                              : "No date"}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </section>
@@ -891,268 +775,6 @@ export default function ROIPage() {
           </div>
         </div>
       </div>
-
-      {/* RECORD RECOVERED REVENUE MODAL */}
-      {showRevenueModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-white/10 bg-[#0c1016] shadow-2xl">
-            <div className="flex items-start justify-between border-b border-white/10 p-6">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                  REVORA · REVENUE EVENT
-                </p>
-
-                <h2 className="mt-2 text-2xl font-semibold">
-                  Record Recovered Revenue
-                </h2>
-
-                <p className="mt-2 text-sm text-gray-500">
-                  Record actual revenue recovered from an opportunity.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeRevenueModal}
-                disabled={savingRevenue}
-                className="rounded-xl p-2 text-xl text-gray-500 transition hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-
-            <form
-              onSubmit={recordRevenue}
-              className="space-y-5 p-6"
-            >
-              {error && (
-                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-red-400">
-                    Failed to record recovered revenue
-                  </p>
-
-                  <p className="mt-2 break-words text-sm leading-6 text-gray-300">
-                    {error}
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Opportunity
-                </label>
-
-                <select
-                  value={
-                    revenueForm.opportunityId
-                  }
-                  onChange={(event) => {
-                    const opportunityId =
-                      event.target.value;
-
-                    const selected =
-                      opportunities.find(
-                        (opportunity) =>
-                          opportunity.id ===
-                          opportunityId,
-                      );
-
-                    setRevenueForm(
-                      (current) => ({
-                        ...current,
-                        opportunityId,
-                        amount:
-                          selected?.estimated_value !=
-                          null
-                            ? String(
-                                selected.estimated_value,
-                              )
-                            : current.amount,
-                      }),
-                    );
-                  }}
-                  disabled={savingRevenue}
-                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500/50 disabled:opacity-50"
-                  style={{
-                    colorScheme: "dark",
-                  }}
-                >
-                  <option
-                    value=""
-                    className="bg-[#0c1016] text-gray-500"
-                  >
-                    Select opportunity
-                  </option>
-
-                  {opportunities
-                    .filter(
-                      (opportunity) =>
-                        ![
-                          "recovered",
-                          "closed",
-                          "lost",
-                        ].includes(
-                          opportunity.status,
-                        ),
-                    )
-                    .map((opportunity) => (
-                      <option
-                        key={opportunity.id}
-                        value={opportunity.id}
-                        className="bg-[#0c1016] text-white"
-                      >
-                        {opportunity.title ||
-                          "Untitled Opportunity"}{" "}
-                        ·{" "}
-                        {formatCurrency(
-                          Number(
-                            opportunity.estimated_value ||
-                              0,
-                          ),
-                        )}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Recovered Amount
-                </label>
-
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={revenueForm.amount}
-                  onChange={(event) =>
-                    setRevenueForm(
-                      (current) => ({
-                        ...current,
-                        amount:
-                          event.target.value,
-                      }),
-                    )
-                  }
-                  disabled={savingRevenue}
-                  placeholder="5000"
-                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition placeholder:text-gray-700 focus:border-indigo-500/50 disabled:opacity-50"
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Source
-                </label>
-
-                <select
-                  value={revenueForm.source}
-                  onChange={(event) =>
-                    setRevenueForm(
-                      (current) => ({
-                        ...current,
-                        source:
-                          event.target.value,
-                      }),
-                    )
-                  }
-                  disabled={savingRevenue}
-                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500/50 disabled:opacity-50"
-                  style={{
-                    colorScheme: "dark",
-                  }}
-                >
-                  <option
-                    value="Follow-up"
-                    className="bg-[#0c1016] text-white"
-                  >
-                    Follow-up
-                  </option>
-
-                  <option
-                    value="Phone Call"
-                    className="bg-[#0c1016] text-white"
-                  >
-                    Phone Call
-                  </option>
-
-                  <option
-                    value="Email"
-                    className="bg-[#0c1016] text-white"
-                  >
-                    Email
-                  </option>
-
-                  <option
-                    value="Inbound"
-                    className="bg-[#0c1016] text-white"
-                  >
-                    Inbound
-                  </option>
-
-                  <option
-                    value="Manual recovery"
-                    className="bg-[#0c1016] text-white"
-                  >
-                    Manual recovery
-                  </option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Recovered At
-                </label>
-
-                <input
-                  type="datetime-local"
-                  value={revenueForm.occurredAt}
-                  onChange={(event) =>
-                    setRevenueForm(
-                      (current) => ({
-                        ...current,
-                        occurredAt:
-                          event.target.value,
-                      }),
-                    )
-                  }
-                  disabled={savingRevenue}
-                  className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500/50 disabled:opacity-50"
-                />
-              </div>
-
-              <div className="rounded-xl border border-indigo-500/10 bg-indigo-500/5 p-4">
-                <p className="text-xs leading-5 text-gray-400">
-                  Revora will mark this opportunity as recovered.
-                  The database automatically records the recovery event.
-                </p>
-              </div>
-
-              <div className="flex flex-col-reverse gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={closeRevenueModal}
-                  disabled={savingRevenue}
-                  className="rounded-xl border border-white/10 px-5 py-3 text-sm font-semibold text-gray-300 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={savingRevenue}
-                  className="rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {savingRevenue
-                    ? "Recording..."
-                    : "Record Revenue & Close Opportunity"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </main>
   );
 }
