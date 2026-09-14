@@ -606,10 +606,10 @@ Best regards`
   if (loading) {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.10),_transparent_28%),#07090d] text-white">
-        <div className="flex min-h-screen">
-          <Sidebar />
+        <Sidebar />
 
-          <main className="flex-1 p-8">
+        <div className="min-h-screen lg:pl-64">
+          <main className="flex min-h-screen items-center justify-center p-6 lg:p-8">
             <div className="flex min-h-[400px] items-center justify-center">
               <div className="text-center">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
@@ -627,13 +627,11 @@ Best regards`
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.10),_transparent_28%),#07090d] text-white">
-      <div className="flex min-h-screen">
+      <Sidebar />
 
-        {/* SHARED SIDEBAR */}
-        <Sidebar />
-
+      <div className="min-h-screen lg:pl-64">
         {/* MAIN CONTENT */}
-        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 sm:py-7 lg:px-10 lg:py-8">
+        <main className="min-w-0 px-4 py-5 sm:px-6 sm:py-7 lg:px-10 lg:py-8">
           <div className="mx-auto max-w-[1500px]">
 
             {/* HEADER */}
