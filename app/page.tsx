@@ -74,6 +74,12 @@ function formatDate(value: string | null | undefined) {
   }).format(date);
 }
 
+function cleanDisplayTitle(title: string) {
+  return title
+    .replace(/^\[REVORA DEMO\]\s*/i, "")
+    .trim();
+}
+
 function isActiveOpportunity(opportunity: Opportunity) {
   return !["recovered", "closed", "lost"].includes(
     opportunity.status,
@@ -162,7 +168,7 @@ function Metric({
         />
       </div>
 
-      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em] text-white">
+      <p className="mt-4 text-3xl font-semibold tracking-[-0.035em] text-white">
         {value}
       </p>
 
@@ -187,18 +193,18 @@ function OpportunityCard({
   const value = Number(opportunity.estimated_value || 0);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 transition hover:border-white/15">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 transition hover:border-white/15 sm:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-sm font-bold text-indigo-400">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-sm font-bold text-indigo-400">
               !
             </div>
 
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="min-w-0 break-words text-base font-semibold text-white">
-                  {opportunity.title}
+                  {cleanDisplayTitle(opportunity.title)}
                 </h3>
 
                 <span className="rounded-md bg-white/5 px-2 py-1 text-[10px] capitalize text-gray-500">
@@ -215,13 +221,13 @@ function OpportunityCard({
               </div>
 
               <p className="mt-1 text-xs text-gray-500">
-                Highest-priority active recovery opportunity
+                Ranked recovery opportunity
               </p>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 lg:min-w-[430px] lg:gap-6">
+        <div className="grid grid-cols-3 gap-4 lg:min-w-[410px] lg:gap-6">
           <div className="min-w-0">
             <p className="text-[10px] font-semibold tracking-wider text-gray-500">
               VALUE
@@ -262,7 +268,7 @@ function OpportunityCard({
         </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-white/5 pt-5">
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-white/5 pt-4">
         <span className="text-xs text-gray-600">
           Created {formatDate(opportunity.created_at)}
         </span>
@@ -471,20 +477,16 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen w-full overflow-x-hidden bg-[#07090d] text-white">
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)]">
-        {/* Desktop sidebar slot.
-            The actual sidebar is fixed, while this 250px column
-            keeps the dashboard content in the correct position. */}
         <div className="relative hidden lg:block">
           <Sidebar />
         </div>
 
-        {/* Mobile sidebar/header */}
         <div className="lg:hidden">
           <Sidebar />
         </div>
 
         <section className="min-w-0 w-full">
-  <div className="w-full px-4 py-6 sm:px-7 sm:py-8 lg:px-8 xl:px-10">
+          <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-8 sm:py-8 lg:px-10">
             <header className="flex flex-col gap-6 border-b border-white/10 pb-8 lg:flex-row lg:items-end lg:justify-between">
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
@@ -567,7 +569,7 @@ export default function DashboardPage() {
                   />
                 </section>
 
-                <section className="mt-10">
+                <section className="mt-9">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
@@ -585,7 +587,7 @@ export default function DashboardPage() {
                       </div>
 
                       <p className="mt-1 text-sm text-gray-500">
-                        Highest-priority opportunities that need action.
+                        Ranked active opportunities that need action.
                       </p>
                     </div>
 
@@ -602,7 +604,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 space-y-4">
+                  <div className="mt-4 space-y-3">
                     {activeOpportunities.length === 0 ? (
                       <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-10 text-center">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400">
@@ -639,7 +641,7 @@ export default function DashboardPage() {
                   </div>
                 </section>
 
-                <section className="mt-10">
+                <section className="mt-9">
                   <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-5 sm:p-8">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                       <div>
@@ -705,7 +707,7 @@ export default function DashboardPage() {
                   </div>
                 </section>
 
-                <section className="mt-10 grid gap-4 md:grid-cols-3">
+                <section className="mt-9 grid gap-4 md:grid-cols-3">
                   <QuickAction
                     title="AI Recovery"
                     description="Let Revora surface the highest-value opportunities."
