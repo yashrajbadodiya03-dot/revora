@@ -78,6 +78,11 @@ function cleanTitle(title: string) {
   return title.replace(/^\[REVORA DEMO\]\s*/i, "").trim();
 }
 
+function displayEmail(email: string | null) {
+  if (!email) return null;
+  return email.replace(/@demo\.revora\.local$/i, "@example.com");
+}
+
 function Modal({
   title,
   description,
@@ -609,7 +614,7 @@ export default function CustomersPage() {
                             </div>
 
                             <div className="mt-2 flex flex-col gap-1 text-sm text-gray-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
-                              {row.customer.email && <span>{row.customer.email}</span>}
+                              {row.customer.email && <span>{displayEmail(row.customer.email)}</span>}
                               {row.customer.phone && <span>{row.customer.phone}</span>}
                             </div>
 
@@ -838,7 +843,7 @@ export default function CustomersPage() {
                     </p>
                     {selectedCustomer.email && (
                       <p className="mt-1 break-all text-sm text-gray-500">
-                        {selectedCustomer.email}
+                        {displayEmail(selectedCustomer.email)}
                       </p>
                     )}
                     {selectedCustomer.phone && (
