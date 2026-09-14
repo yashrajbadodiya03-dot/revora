@@ -4,7 +4,6 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { createClient } from "@/lib/supabase";
-import { calculateOpportunityScore } from "@/lib/opportunity-scoring";
 
 type OpportunityStatus =
   | "new"
@@ -50,6 +49,8 @@ type OpportunityForm = {
   title: string;
   description: string;
   estimatedValue: string;
+  priorityScore: string;
+  probabilityScore: string;
 };
 
 type InboundForm = {
@@ -71,6 +72,8 @@ const defaultOpportunityForm: OpportunityForm = {
   title: "",
   description: "",
   estimatedValue: "",
+  priorityScore: "80",
+  probabilityScore: "70",
 };
 
 const defaultInboundForm: InboundForm = {
@@ -115,6 +118,10 @@ function formatDate(value: string | null | undefined) {
   }).format(date);
 }
 
+function cleanDisplayTitle(title: string) {
+  return title.replace(/^\[REVORA DEMO\]\s*/i, "").trim();
+}
+
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/);
 
@@ -138,30 +145,6 @@ function typeLabel(type: OpportunityType) {
     default:
       return type;
   }
-}
-
-function scoringType(type: OpportunityType) {
-  if (type === "unanswered_inquiry") {
-    return "inquiry" as const;
-  }
-
-  return type;
-}
-
-function getCalculatedScores(opportunity: Opportunity) {
-  const createdAt = new Date(opportunity.created_at).getTime();
-
-  const hoursSinceCreated = Number.isFinite(createdAt)
-    ? Math.max(0, (Date.now() - createdAt) / (1000 * 60 * 60))
-    : 0;
-
-  return calculateOpportunityScore({
-    type: scoringType(opportunity.type),
-    revenue: Number(opportunity.estimated_value || 0),
-    hoursSinceCreated,
-    customerResponded: false,
-    followUpCount: 0,
-  });
 }
 
 function statusLabel(status: OpportunityStatus) {
@@ -203,30 +186,9 @@ function statusClass(status: OpportunityStatus) {
 }
 
 function priorityClass(priority: number) {
-  if (priority >= 85) return "text-rose-400";
+  if (priority >= 80) return "text-rose-400";
   if (priority >= 70) return "text-amber-400";
   return "text-gray-400";
-}
-
-function urgencyClass(
-  urgency: "critical" | "high" | "medium" | "low",
-) {
-  switch (urgency) {
-    case "critical":
-      return "border-rose-500/20 bg-rose-500/10 text-rose-300";
-    case "high":
-      return "border-amber-500/20 bg-amber-500/10 text-amber-300";
-    case "medium":
-      return "border-indigo-500/20 bg-indigo-500/10 text-indigo-300";
-    default:
-      return "border-white/10 bg-white/5 text-gray-400";
-  }
-}
-
-function urgencyLabel(
-  urgency: "critical" | "high" | "medium" | "low",
-) {
-  return urgency.charAt(0).toUpperCase() + urgency.slice(1);
 }
 
 function nextStatus(
@@ -361,23 +323,21 @@ function OpportunityCard({
   const customerName =
     opportunity.customer?.name || "Unknown customer";
 
-  const calculated = getCalculatedScores(opportunity);
-
-  const priority = calculated.score;
-  const probability = calculated.recoveryProbability;
+  const priority = Number(opportunity.priority_score || 0);
+  const probability = Number(opportunity.probability_score || 0);
   const value = Number(opportunity.estimated_value || 0);
 
   const next = nextStatus(opportunity.status);
 
   return (
     <div
-      className={`rounded-2xl border p-5 transition ${
+      className={`rounded-2xl border p-4 transition ${
         recovered
           ? "border-emerald-500/10 bg-emerald-500/[0.025]"
           : "border-white/10 bg-white/[0.02] hover:border-white/15"
       }`}
     >
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-3">
             <div
@@ -407,18 +367,10 @@ function OpportunityCard({
                 >
                   {statusLabel(opportunity.status)}
                 </span>
-
-                <span
-                  className={`rounded-md border px-2 py-1 text-[10px] font-medium ${urgencyClass(
-                    calculated.urgency,
-                  )}`}
-                >
-                  {urgencyLabel(calculated.urgency)}
-                </span>
               </div>
 
               <p className="mt-1 text-xs text-gray-500">
-                {opportunity.title}
+                {cleanDisplayTitle(opportunity.title)}
               </p>
 
               {opportunity.description && (
@@ -457,10 +409,6 @@ function OpportunityCard({
             >
               {priority}
             </p>
-
-            <p className="mt-1 text-[10px] text-gray-600">
-              AI calculated
-            </p>
           </div>
 
           <div>
@@ -471,57 +419,11 @@ function OpportunityCard({
             <p className="mt-1 text-lg font-semibold text-indigo-400">
               {probability}%
             </p>
-
-            <p className="mt-1 text-[10px] text-gray-600">
-              Recovery estimate
-            </p>
           </div>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 border-t border-white/5 pt-5 sm:grid-cols-3">
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
-            URGENCY
-          </p>
-
-          <p
-            className={`mt-1 text-xs font-semibold ${
-              calculated.urgency === "critical"
-                ? "text-rose-400"
-                : calculated.urgency === "high"
-                  ? "text-amber-400"
-                  : calculated.urgency === "medium"
-                    ? "text-indigo-400"
-                    : "text-gray-400"
-            }`}
-          >
-            {urgencyLabel(calculated.urgency)}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
-            AI RECOMMENDATION
-          </p>
-
-          <p className="mt-1 text-xs font-semibold text-gray-300">
-            {calculated.recommendedAction}
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-gray-600">
-            WHY REVORA PRIORITIZED THIS
-          </p>
-
-          <p className="mt-1 truncate text-xs text-gray-500">
-            {calculated.reason}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-white/5 pt-5">
         <span className="text-xs text-gray-600">
           Created {formatDate(opportunity.created_at)}
         </span>
@@ -794,7 +696,7 @@ export default function OpportunitiesPage() {
     () =>
       activeOpportunities.filter(
         (opportunity) =>
-          getCalculatedScores(opportunity).score >= 75,
+          Number(opportunity.priority_score || 0) >= 75,
       ).length,
     [activeOpportunities],
   );
@@ -858,18 +760,36 @@ export default function OpportunitiesPage() {
       return;
     }
 
+    const priorityScore = Number(
+      opportunityForm.priorityScore,
+    );
+
+    if (
+      !Number.isFinite(priorityScore) ||
+      priorityScore < 0 ||
+      priorityScore > 100
+    ) {
+      setError("Priority Score must be between 0 and 100.");
+      return;
+    }
+
+    const probabilityScore = Number(
+      opportunityForm.probabilityScore,
+    );
+
+    if (
+      !Number.isFinite(probabilityScore) ||
+      probabilityScore < 0 ||
+      probabilityScore > 100
+    ) {
+      setError("Probability Score must be between 0 and 100.");
+      return;
+    }
+
     if (!opportunityForm.title.trim()) {
       setError("Please enter an opportunity title.");
       return;
     }
-
-    const calculated = calculateOpportunityScore({
-      type: scoringType(opportunityForm.type),
-      revenue: estimatedValue,
-      hoursSinceCreated: 0,
-      customerResponded: false,
-      followUpCount: 0,
-    });
 
     setSaving(true);
 
@@ -884,9 +804,9 @@ export default function OpportunitiesPage() {
           description:
             opportunityForm.description.trim() || null,
           estimated_value: estimatedValue,
-          priority_score: calculated.score,
-          intent_score: calculated.score,
-          probability_score: calculated.recoveryProbability,
+          priority_score: priorityScore,
+          intent_score: priorityScore,
+          probability_score: probabilityScore,
           status: "new",
         });
 
@@ -894,7 +814,7 @@ export default function OpportunitiesPage() {
 
       closeCreateModal();
 
-      setSuccess("Opportunity created and scored by Revora.");
+      setSuccess("Opportunity created successfully.");
 
       await loadData();
     } catch (err) {
@@ -1179,8 +1099,8 @@ export default function OpportunitiesPage() {
       <div className="flex min-h-screen">
         <Sidebar />
 
-        <section className="min-w-0 flex-1 lg:ml-[250px]">
-          <div className="w-full px-5 py-8 sm:px-7 lg:px-8 xl:px-10">
+        <section className="min-w-0 flex-1">
+          <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-10">
             <header className="flex flex-col gap-6 border-b border-white/10 pb-8 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-500">
@@ -1206,7 +1126,7 @@ export default function OpportunitiesPage() {
                   }}
                   className="shrink-0 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-white/20 hover:bg-white/5"
                 >
-                  Simulate Inbound Event
+                  Log New Opportunity
                 </button>
 
                 <span className="mx-3 hidden h-6 w-px bg-white/10 sm:block" />
@@ -1251,7 +1171,9 @@ export default function OpportunitiesPage() {
                   <Metric
                     title="Potential Revenue"
                     value={formatMoney(totalPotential)}
-                    subtitle={`${activeOpportunities.length} active ${
+                    subtitle={`${
+                      activeOpportunities.length
+                    } active ${
                       activeOpportunities.length === 1
                         ? "opportunity"
                         : "opportunities"
@@ -1278,7 +1200,7 @@ export default function OpportunitiesPage() {
                   <Metric
                     title="High Priority"
                     value={String(highPriorityCount)}
-                    subtitle="AI score ≥ 75"
+                    subtitle="Priority score ≥ 75"
                   />
                 </section>
 
@@ -1286,7 +1208,7 @@ export default function OpportunitiesPage() {
                   <SectionHeader
                     eyebrow="ACTION REQUIRED"
                     title="Active recovery opportunities"
-                    description="Revora continuously scores these opportunities based on value, type, and time sensitivity."
+                    description="These opportunities still require action."
                     count={activeOpportunities.length}
                     value={totalPotential}
                   />
@@ -1296,7 +1218,7 @@ export default function OpportunitiesPage() {
                       <EmptyState
                         title="No active opportunities"
                         description="Your recovery queue is clear. New missed calls, inquiries, estimates, and follow-up gaps will appear here."
-                        actionLabel="Simulate Inbound Event"
+                        actionLabel="Log New Opportunity"
                         onAction={() => {
                           resetMessages();
                           setShowInboundModal(true);
@@ -1521,7 +1443,7 @@ export default function OpportunitiesPage() {
                     title: event.target.value,
                   }))
                 }
-                placeholder="Missed Call - New Service Lead"
+                placeholder="Missed Call - AC Service Request"
                 className={fieldClass}
               />
             </Field>
@@ -1541,16 +1463,40 @@ export default function OpportunitiesPage() {
               />
             </Field>
 
-            <div className="rounded-2xl border border-indigo-500/15 bg-indigo-500/5 p-4">
-              <p className="text-xs font-semibold text-indigo-300">
-                REVORA INTELLIGENCE
-              </p>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Priority Score">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={opportunityForm.priorityScore}
+                  onChange={(event) =>
+                    setOpportunityForm((current) => ({
+                      ...current,
+                      priorityScore: event.target.value,
+                    }))
+                  }
+                  className={fieldClass}
+                />
+              </Field>
 
-              <p className="mt-1 text-xs leading-5 text-gray-500">
-                Priority and recovery probability are calculated
-                automatically using opportunity type, revenue value,
-                and time sensitivity.
-              </p>
+              <Field label="Probability Score">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={opportunityForm.probabilityScore}
+                  onChange={(event) =>
+                    setOpportunityForm((current) => ({
+                      ...current,
+                      probabilityScore: event.target.value,
+                    }))
+                  }
+                  className={fieldClass}
+                />
+              </Field>
             </div>
 
             <ModalActions
@@ -1564,8 +1510,8 @@ export default function OpportunitiesPage() {
 
       {showInboundModal && (
         <Modal
-          title="Simulate Inbound Event"
-          description="Create a realistic inbound event and let Revora generate the opportunity automatically."
+          title="Log New Opportunity"
+          description="Capture a new customer signal and let Revora turn it into a recovery opportunity."
           onClose={closeInboundModal}
         >
           <form
