@@ -703,7 +703,7 @@ export default function CustomersPage() {
                         </button>
                         {row.customer.email && (
                           <a
-                            href={`mailto:${row.customer.email}`}
+                            href={`mailto:${displayEmail(row.customer.email) ?? row.customer.email}`}
                             className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
                           >
                             Email
