@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { createClient } from "@/lib/supabase";
 
@@ -10,21 +10,6 @@ type Customer = {
   name: string;
   email: string | null;
   phone: string | null;
-  address: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type CustomerForm = {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-};
-
-type Business = {
-  id: string;
-  name: string;
 };
 
 type Opportunity = {
@@ -32,159 +17,217 @@ type Opportunity = {
   customer_id: string | null;
   title: string;
   type: string;
-  estimated_value: number;
-  priority_score: number;
-  probability_score: number;
+  estimated_value: number | null;
   status: string;
   created_at: string;
 };
 
-type FollowUp = {
-  id: string;
-  opportunity_id: string | null;
-  channel: string;
-  status: string;
-  scheduled_at: string | null;
-  created_at: string;
-};
-
-type RevenueEvent = {
-  id: string;
-  opportunity_id: string;
-  amount: number;
-  created_at: string;
+type CustomerForm = {
+  name: string;
+  email: string;
+  phone: string;
 };
 
 const emptyForm: CustomerForm = {
   name: "",
   email: "",
   phone: "",
-  address: "",
 };
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "CU";
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function typeLabel(type: string) {
+  const labels: Record<string, string> = {
+    missed_call: "Missed Call",
+    unanswered_inquiry: "Website Inquiry",
+    old_estimate: "Old Estimate",
+    no_follow_up: "No Follow-Up",
+  };
+  return labels[type] ?? type.replaceAll("_", " ");
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    new: "New",
+    contacted: "Contacted",
+    qualified: "Qualified",
+    in_progress: "In Progress",
+    recovered: "Recovered",
+    closed: "Closed",
+    lost: "Lost",
+  };
+  return labels[status] ?? status;
+}
+
+function cleanTitle(title: string) {
+  return title.replace(/^\[REVORA DEMO\]\s*/i, "").trim();
+}
+
+function Modal({
+  title,
+  description,
+  onClose,
+  children,
+}: {
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#0b0f15] shadow-2xl shadow-black/40">
+        <div className="flex items-start justify-between border-b border-white/10 px-6 py-5">
+          <div>
+            <h2 className="text-lg font-semibold text-white">{title}</h2>
+            {description && (
+              <p className="mt-1 max-w-md text-sm leading-5 text-gray-500">
+                {description}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-white/10 px-3 py-2 text-sm text-gray-400 transition hover:bg-white/5 hover:text-white"
+          >
+            ×
+          </button>
+        </div>
+        <div className="px-6 py-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  caption,
+  accent,
+}: {
+  label: string;
+  value: string;
+  caption: string;
+  accent?: "emerald" | "indigo";
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[#0c1016] p-5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+          {label}
+        </p>
+        <span
+          className={`h-2 w-2 rounded-full ${
+            accent === "emerald" ? "bg-emerald-400" : "bg-indigo-400"
+          }`}
+        />
+      </div>
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-white">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-gray-500">{caption}</p>
+    </div>
+  );
+}
+
+function StatusPill({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+        active
+          ? "border-indigo-500/20 bg-indigo-500/10 text-indigo-300"
+          : "border-white/10 bg-white/5 text-gray-500"
+      }`}
+    >
+      {active ? "Active history" : "No active history"}
+    </span>
+  );
+}
 
 export default function CustomersPage() {
   const supabase = useMemo(() => createClient(), []);
-
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [revenueEvents, setRevenueEvents] = useState<RevenueEvent[]>([]);
-
-  const [business, setBusiness] = useState<Business | null>(null);
   const [businessId, setBusinessId] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState("");
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
-
-  const [showModal, setShowModal] = useState(false);
-  const [editingCustomer, setEditingCustomer] =
-    useState<Customer | null>(null);
-
-  const [selectedCustomer, setSelectedCustomer] =
-    useState<Customer | null>(null);
-
+  const [success, setSuccess] = useState("");
+  const [query, setQuery] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<CustomerForm>(emptyForm);
 
-  async function loadCustomers() {
+  async function loadData() {
     setLoading(true);
     setError("");
 
     try {
       const {
         data: { user },
-        error: authError,
+        error: userError,
       } = await supabase.auth.getUser();
 
-      if (authError) throw authError;
-
+      if (userError) throw userError;
       if (!user) {
         window.location.href = "/login";
         return;
       }
 
-      setUserEmail(user.email ?? "");
-
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("business_id")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
       if (profileError) throw profileError;
+      if (!profile?.business_id) throw new Error("No business workspace found.");
 
-      if (!profile?.business_id) {
-        throw new Error(
-          "Your account is not connected to a business workspace yet."
-        );
-      }
+      setBusinessId(profile.business_id);
 
-      const currentBusinessId = profile.business_id;
-      setBusinessId(currentBusinessId);
+      const [{ data: customerData, error: customerError }, { data: opportunityData, error: opportunityError }] =
+        await Promise.all([
+          supabase
+            .from("customers")
+            .select("id, business_id, name, email, phone")
+            .eq("business_id", profile.business_id)
+            .order("name", { ascending: true }),
+          supabase
+            .from("opportunities")
+            .select("id, customer_id, title, type, estimated_value, status, created_at")
+            .eq("business_id", profile.business_id)
+            .order("created_at", { ascending: false }),
+        ]);
 
-      const { data: businessData, error: businessError } =
-        await supabase
-          .from("businesses")
-          .select("id, name")
-          .eq("id", currentBusinessId)
-          .single();
+      if (customerError) throw customerError;
+      if (opportunityError) throw opportunityError;
 
-      if (businessError) throw businessError;
-
-      setBusiness(businessData);
-
-      const [
-        customersResult,
-        opportunitiesResult,
-        followUpsResult,
-        revenueEventsResult,
-      ] = await Promise.all([
-        supabase
-          .from("customers")
-          .select(
-            "id, business_id, name, email, phone, address, created_at, updated_at"
-          )
-          .eq("business_id", currentBusinessId)
-          .order("created_at", { ascending: false }),
-
-        supabase
-          .from("opportunities")
-          .select(
-            "id, customer_id, title, type, estimated_value, priority_score, probability_score, status, created_at"
-          )
-          .eq("business_id", currentBusinessId)
-          .order("created_at", { ascending: false }),
-
-        supabase
-          .from("follow_ups")
-          .select(
-            "id, opportunity_id, channel, status, scheduled_at, created_at"
-          )
-          .eq("business_id", currentBusinessId)
-          .order("created_at", { ascending: false }),
-
-        supabase
-          .from("revenue_events")
-          .select("id, opportunity_id, amount, created_at")
-          .eq("business_id", currentBusinessId)
-          .order("created_at", { ascending: false }),
-      ]);
-
-      if (customersResult.error) throw customersResult.error;
-      if (opportunitiesResult.error) throw opportunitiesResult.error;
-      if (followUpsResult.error) throw followUpsResult.error;
-      if (revenueEventsResult.error) throw revenueEventsResult.error;
-
-      setCustomers(customersResult.data ?? []);
-      setOpportunities(opportunitiesResult.data ?? []);
-      setFollowUps(followUpsResult.data ?? []);
-      setRevenueEvents(revenueEventsResult.data ?? []);
+      setCustomers((customerData ?? []) as Customer[]);
+      setOpportunities((opportunityData ?? []) as Opportunity[]);
     } catch (err) {
-      console.error(err);
-
+      console.error("Customers load error:", err);
       setError(
-        err instanceof Error ? err.message : "Failed to load customers."
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading customers.",
       );
     } finally {
       setLoading(false);
@@ -192,143 +235,155 @@ export default function CustomersPage() {
   }
 
   useEffect(() => {
-    void loadCustomers();
+    void loadData();
   }, []);
 
-  function getInitials(name: string) {
-    const value = name.trim();
+  const stats = useMemo(() => {
+    const active = opportunities.filter(
+      (item) => !["recovered", "closed", "lost"].includes(item.status),
+    );
+    const recovered = opportunities.filter((item) => item.status === "recovered");
 
-    if (!value) return "CU";
+    return {
+      customerCount: customers.length,
+      activeCustomers: new Set(active.map((item) => item.customer_id).filter(Boolean)).size,
+      pipeline: active.reduce((sum, item) => sum + Number(item.estimated_value || 0), 0),
+      recovered: recovered.reduce((sum, item) => sum + Number(item.estimated_value || 0), 0),
+    };
+  }, [customers, opportunities]);
 
-    const parts = value.split(/\s+/);
+  const customerRows = useMemo(() => {
+    const normalized = customers.map((customer) => {
+      const customerOpportunities = opportunities.filter(
+        (item) => item.customer_id === customer.id,
+      );
+      const active = customerOpportunities.filter(
+        (item) => !["recovered", "closed", "lost"].includes(item.status),
+      );
+      const recovered = customerOpportunities.filter(
+        (item) => item.status === "recovered",
+      );
+      const lastActivity = [...customerOpportunities].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      )[0];
 
-    if (parts.length === 1) {
-      return parts[0].slice(0, 2).toUpperCase();
-    }
-
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  }
-
-  function formatMoney(value: number) {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(value);
-  }
-
-  function formatDate(date: string | null) {
-    if (!date) return "—";
-
-    const value = new Date(date);
-
-    if (Number.isNaN(value.getTime())) return "—";
-
-    return value.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
+      return {
+        customer,
+        all: customerOpportunities,
+        active,
+        recovered,
+        pipeline: active.reduce(
+          (sum, item) => sum + Number(item.estimated_value || 0),
+          0,
+        ),
+        recoveredValue: recovered.reduce(
+          (sum, item) => sum + Number(item.estimated_value || 0),
+          0,
+        ),
+        lastActivity,
+      };
     });
+
+    const needle = query.trim().toLowerCase();
+    if (!needle) return normalized;
+
+    return normalized.filter(({ customer }) =>
+      [customer.name, customer.email ?? "", customer.phone ?? ""].some((value) =>
+        value.toLowerCase().includes(needle),
+      ),
+    );
+  }, [customers, opportunities, query]);
+
+  function resetMessages() {
+    setError("");
+    setSuccess("");
   }
 
-  function formatDateTime(date: string | null) {
-    if (!date) return "—";
-
-    const value = new Date(date);
-
-    if (Number.isNaN(value.getTime())) return "—";
-
-    return value.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  }
-
-  function openAddModal() {
+  function openCreate() {
+    resetMessages();
     setEditingCustomer(null);
     setForm(emptyForm);
-    setError("");
-    setShowModal(true);
+    setShowCreate(true);
   }
 
-  function openEditModal(customer: Customer) {
+  function openEdit(customer: Customer) {
+    resetMessages();
     setEditingCustomer(customer);
-
     setForm({
-      name: customer.name ?? "",
+      name: customer.name,
       email: customer.email ?? "",
       phone: customer.phone ?? "",
-      address: customer.address ?? "",
     });
-
-    setError("");
-    setShowModal(true);
   }
 
-  function closeModal(force = false) {
-    if (saving && !force) return;
-
-    setShowModal(false);
+  function closeModal() {
+    if (saving) return;
+    setShowCreate(false);
     setEditingCustomer(null);
     setForm(emptyForm);
-    setError("");
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function saveCustomer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!businessId) return;
 
-    if (!businessId) {
-      setError("Business information is missing.");
-      return;
-    }
-
-    if (!form.name.trim()) {
+    const name = form.name.trim();
+    if (!name) {
       setError("Customer name is required.");
       return;
     }
 
     setSaving(true);
     setError("");
+    setSuccess("");
 
     try {
+      const payload = {
+        name,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+      };
+
       if (editingCustomer) {
-        const { error: updateError } = await supabase
+        const { data, error: updateError } = await supabase
           .from("customers")
-          .update({
-            name: form.name.trim(),
-            email: form.email.trim() || null,
-            phone: form.phone.trim() || null,
-            address: form.address.trim() || null,
-            updated_at: new Date().toISOString(),
-          })
+          .update(payload)
           .eq("id", editingCustomer.id)
-          .eq("business_id", businessId);
+          .eq("business_id", businessId)
+          .select("id, business_id, name, email, phone")
+          .single();
 
         if (updateError) throw updateError;
+        setCustomers((current) =>
+          current.map((customer) =>
+            customer.id === editingCustomer.id ? (data as Customer) : customer,
+          ),
+        );
+        setSuccess("Customer updated successfully.");
       } else {
-        const { error: insertError } = await supabase
+        const { data, error: insertError } = await supabase
           .from("customers")
           .insert({
             business_id: businessId,
-            name: form.name.trim(),
-            email: form.email.trim() || null,
-            phone: form.phone.trim() || null,
-            address: form.address.trim() || null,
-          });
+            ...payload,
+          })
+          .select("id, business_id, name, email, phone")
+          .single();
 
         if (insertError) throw insertError;
+        setCustomers((current) => [...current, data as Customer].sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ));
+        setSuccess("Customer created successfully.");
       }
 
-      closeModal(true);
-      await loadCustomers();
+      setShowCreate(false);
+      setEditingCustomer(null);
+      setForm(emptyForm);
     } catch (err) {
-      console.error(err);
-
+      console.error("Customer save error:", err);
       setError(
-        err instanceof Error ? err.message : "Failed to save customer."
+        err instanceof Error ? err.message : "Unable to save customer.",
       );
     } finally {
       setSaving(false);
@@ -336,11 +391,27 @@ export default function CustomersPage() {
   }
 
   async function deleteCustomer(customer: Customer) {
-    const confirmed = window.confirm(
-      `Delete customer "${customer.name}"? This cannot be undone.`
+    if (!businessId) return;
+
+    const customerOpportunities = opportunities.filter(
+      (item) => item.customer_id === customer.id,
     );
 
-    if (!confirmed || !businessId) return;
+    if (customerOpportunities.length > 0) {
+      setError(
+        "This customer has linked opportunities. Remove or reassign those opportunities before deleting the customer.",
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${customer.name}? This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(customer.id);
+    setError("");
+    setSuccess("");
 
     try {
       const { error: deleteError } = await supabase
@@ -351,743 +422,484 @@ export default function CustomersPage() {
 
       if (deleteError) throw deleteError;
 
+      setCustomers((current) =>
+        current.filter((item) => item.id !== customer.id),
+      );
       if (selectedCustomer?.id === customer.id) {
         setSelectedCustomer(null);
       }
-
-      await loadCustomers();
+      setSuccess("Customer deleted successfully.");
     } catch (err) {
-      console.error(err);
-
+      console.error("Customer delete error:", err);
       setError(
-        err instanceof Error ? err.message : "Failed to delete customer."
+        err instanceof Error ? err.message : "Unable to delete customer.",
       );
+    } finally {
+      setDeletingId(null);
     }
   }
 
-  function getCustomerOpportunities(customerId: string) {
-    return opportunities.filter(
-      (item) => item.customer_id === customerId
-    );
-  }
-
-  function getCustomerFollowUps(customerId: string) {
-    const ids = new Set(
-      getCustomerOpportunities(customerId).map((item) => item.id)
-    );
-
-    return followUps.filter(
-      (item) =>
-        item.opportunity_id !== null &&
-        ids.has(item.opportunity_id)
-    );
-  }
-
-  function getCustomerRevenue(customerId: string) {
-    const ids = new Set(
-      getCustomerOpportunities(customerId).map((item) => item.id)
-    );
-
-    return revenueEvents
-      .filter((item) => ids.has(item.opportunity_id))
-      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  }
-
-  function getCustomerPipeline(customerId: string) {
-    return getCustomerOpportunities(customerId)
-      .filter(
-        (item) =>
-          item.status !== "recovered" &&
-          item.status !== "lost" &&
-          item.status !== "closed"
-      )
-      .reduce(
-        (sum, item) => sum + Number(item.estimated_value || 0),
-        0
-      );
-  }
-
   return (
-    <main className="min-h-screen w-full overflow-x-hidden bg-[#07090d] text-white">
+    <div className="min-h-screen bg-[#080b10] text-white">
       <Sidebar />
 
-      <section className="w-full min-w-0 lg:ml-[250px]">
-        {/* Desktop top bar */}
-        <header className="hidden h-[72px] items-center justify-between border-b border-white/10 px-8 lg:flex xl:px-10">
-          <div>
-            <p className="text-sm font-medium text-gray-400">
-              Customers
-            </p>
-
-            <p className="mt-0.5 text-[11px] text-gray-600">
-              {business?.name || "Revora"}
-            </p>
-          </div>
-
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold">
-            {business ? getInitials(business.name) : "RV"}
-          </div>
-        </header>
-
-        {/* 
-          IMPORTANT:
-          No huge top padding.
-          Mobile navigation occupies the first ~94px.
-          Content starts immediately after it.
-        */}
-        <div className="px-5 pb-8 pt-[8px] sm:px-7 lg:px-8 lg:py-8 xl:px-10">
-          {/* Mobile identity */}
-          <div className="mb-5 flex items-center justify-between lg:hidden">
-            <div>
-              <p className="text-sm font-medium text-gray-300">
-                Customers
-              </p>
-
-              <p className="mt-0.5 text-[11px] text-gray-600">
-                {business?.name || "Revora"}
+      <main className="min-h-screen lg:pl-64">
+        <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+          <div className="flex items-center justify-between border-b border-white/5 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-2 w-2 rounded-full bg-indigo-400" />
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+                Customer intelligence
               </p>
             </div>
-
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-500 text-xs font-bold">
-              {business ? getInitials(business.name) : "RV"}
-            </div>
-          </div>
-
-          {/* Hero */}
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="mb-3 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-indigo-500" />
-
-                <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                  CUSTOMER INTELLIGENCE
-                </p>
+            <div className="hidden items-center gap-3 sm:flex">
+              <span className="text-xs text-gray-500">Revora HVAC</span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-indigo-400/20 bg-indigo-500/15 text-xs font-semibold text-indigo-300">
+                RH
               </div>
-
-              <h1 className="text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-                Customers
-              </h1>
-
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500">
-                Understand every customer, their recovery opportunities,
-                follow-ups, and recovered revenue.
-              </p>
             </div>
-
-            <button
-              type="button"
-              onClick={openAddModal}
-              className="w-fit rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
-            >
-              + Add Customer
-            </button>
           </div>
 
-          {error && !showModal && (
-            <div className="mt-6 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-              {error}
-            </div>
-          )}
-
-          {/* Directory */}
-          <section className="mt-8 rounded-3xl border border-white/10 bg-[#0c1016]">
-            <div className="flex flex-col gap-2 border-b border-white/10 px-6 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <section className="pt-7">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-500">
-                  CUSTOMER DIRECTORY
+                <p className="text-sm font-medium text-gray-400">Customers</p>
+                <h1 className="mt-2 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                  Customers
+                </h1>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500 sm:text-base">
+                  Understand every customer, their recovery opportunities,
+                  follow-ups, and recovered revenue.
                 </p>
-
-                <h2 className="mt-2 text-xl font-semibold">
-                  Customer accounts
-                </h2>
               </div>
 
-              <p className="text-sm text-gray-500">
-                {customers.length}{" "}
-                {customers.length === 1 ? "customer" : "customers"}
-              </p>
-            </div>
-
-            {loading ? (
-              <div className="flex min-h-[300px] items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-500" />
-              </div>
-            ) : customers.length === 0 ? (
-              <div className="p-12 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-400">
-                  CU
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="flex items-center rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2.5">
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="mr-2 h-4 w-4 text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                  >
+                    <path d="m14.5 14.5 3 3" strokeLinecap="round" />
+                    <circle cx="8.5" cy="8.5" r="5.5" />
+                  </svg>
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search customers"
+                    className="w-44 bg-transparent text-sm text-white outline-none placeholder:text-gray-600"
+                  />
                 </div>
-
-                <h3 className="mt-5 text-lg font-semibold">
-                  No customers yet
-                </h3>
-
-                <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
-                  Add your first customer to start building a complete
-                  revenue recovery history.
-                </p>
-
                 <button
                   type="button"
-                  onClick={openAddModal}
-                  className="mt-6 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold"
+                  onClick={openCreate}
+                  className="rounded-2xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
                 >
                   + Add Customer
                 </button>
               </div>
-            ) : (
-              <div className="divide-y divide-white/10">
-                {customers.map((customer) => {
-                  const customerOpportunities =
-                    getCustomerOpportunities(customer.id);
+            </div>
+          </section>
 
-                  const customerFollowUps =
-                    getCustomerFollowUps(customer.id);
+          <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric
+              label="Customer accounts"
+              value={String(stats.customerCount)}
+              caption="Active workspace customers"
+            />
+            <Metric
+              label="Engaged customers"
+              value={String(stats.activeCustomers)}
+              caption="Customers with open recovery work"
+              accent="indigo"
+            />
+            <Metric
+              label="Active pipeline"
+              value={formatMoney(stats.pipeline)}
+              caption="Open opportunity value"
+            />
+            <Metric
+              label="Recovered revenue"
+              value={formatMoney(stats.recovered)}
+              caption="Completed recovery value"
+              accent="emerald"
+            />
+          </section>
 
-                  const recovered =
-                    getCustomerRevenue(customer.id);
+          {error && (
+            <div className="mt-5 rounded-2xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
+              {error}
+            </div>
+          )}
 
-                  const pipeline =
-                    getCustomerPipeline(customer.id);
+          {success && (
+            <div className="mt-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-300">
+              {success}
+            </div>
+          )}
 
+          <section className="mt-7 overflow-hidden rounded-3xl border border-white/10 bg-[#0c1016]">
+            <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-5 sm:flex-row sm:items-end sm:justify-between sm:px-6">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-300">
+                  Customer directory
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <h2 className="text-xl font-semibold text-white sm:text-2xl">
+                    Customer accounts
+                  </h2>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-gray-400">
+                    {stats.customerCount} {stats.customerCount === 1 ? "customer" : "customers"}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-gray-500">
+                  One view of customer context, open pipeline, and recovered value.
+                </p>
+              </div>
+              <div className="text-xs text-gray-500">
+                {customerRows.length} shown
+              </div>
+            </div>
+
+            <div className="divide-y divide-white/5">
+              {loading ? (
+                <div className="px-6 py-16 text-center text-sm text-gray-500">
+                  Loading customer accounts…
+                </div>
+              ) : customerRows.length === 0 ? (
+                <div className="px-6 py-16 text-center">
+                  <p className="text-base font-semibold text-white">
+                    No customer accounts found
+                  </p>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">
+                    Add a customer to start building recovery history and pipeline context.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openCreate}
+                    className="mt-5 rounded-2xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400"
+                  >
+                    Add Customer
+                  </button>
+                </div>
+              ) : (
+                customerRows.map((row) => {
+                  const activeHistory = row.active.length > 0;
+                  const hasRecovered = row.recovered.length > 0;
                   return (
                     <div
-                      key={customer.id}
-                      className="flex flex-col gap-5 px-6 py-6 sm:px-8 lg:flex-row lg:items-center lg:justify-between"
+                      key={row.customer.id}
+                      className="p-5 transition hover:bg-white/[0.015] sm:p-6"
                     >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCustomer(customer)}
-                        className="flex min-w-0 flex-1 items-center gap-4 text-left"
-                      >
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-xs font-bold text-indigo-400">
-                          {getInitials(customer.name)}
-                        </div>
-
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="truncate text-base font-semibold">
-                              {customer.name}
-                            </h3>
-
-                            {(customerOpportunities.length > 0 ||
-                              customerFollowUps.length > 0 ||
-                              recovered > 0) && (
-                              <span className="rounded-md bg-indigo-500/10 px-2 py-1 text-[10px] text-indigo-400">
-                                Active history
-                              </span>
-                            )}
+                      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="flex min-w-0 items-start gap-4">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-indigo-500/15 bg-indigo-500/10 text-sm font-bold text-indigo-300">
+                            {getInitials(row.customer.name)}
                           </div>
 
-                          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-500">
-                            {customer.email && (
-                              <span>{customer.email}</span>
-                            )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="truncate text-lg font-semibold text-white">
+                                {row.customer.name}
+                              </h3>
+                              <StatusPill active={activeHistory || hasRecovered} />
+                            </div>
 
-                            {customer.phone && (
-                              <span>{customer.phone}</span>
-                            )}
+                            <div className="mt-2 flex flex-col gap-1 text-sm text-gray-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+                              {row.customer.email && <span>{row.customer.email}</span>}
+                              {row.customer.phone && <span>{row.customer.phone}</span>}
+                            </div>
 
-                            {customer.address && (
-                              <span>{customer.address}</span>
+                            {row.lastActivity && (
+                              <p className="mt-2 text-xs text-gray-600">
+                                Latest opportunity: {cleanTitle(row.lastActivity.title)}
+                              </p>
                             )}
                           </div>
                         </div>
-                      </button>
 
-                      <div className="grid grid-cols-3 gap-5 sm:min-w-[360px]">
-                        <div>
-                          <p className="text-[10px] text-gray-500">
-                            OPPORTUNITIES
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold">
-                            {customerOpportunities.length}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] text-gray-500">
-                            PIPELINE
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold">
-                            {formatMoney(pipeline)}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] text-gray-500">
-                            RECOVERED
-                          </p>
-
-                          <p className="mt-1 text-lg font-semibold text-emerald-400">
-                            {formatMoney(recovered)}
-                          </p>
+                        <div className="grid grid-cols-3 gap-5 xl:min-w-[390px]">
+                          <div>
+                            <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
+                              OPPORTUNITIES
+                            </p>
+                            <p className="mt-1 text-xl font-semibold text-white">
+                              {row.all.length}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
+                              PIPELINE
+                            </p>
+                            <p className="mt-1 text-xl font-semibold text-white">
+                              {formatMoney(row.pipeline)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
+                              RECOVERED
+                            </p>
+                            <p className="mt-1 text-xl font-semibold text-emerald-300">
+                              {formatMoney(row.recoveredValue)}
+                            </p>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 gap-2">
+                      {row.all.length > 0 && (
+                        <div className="mt-5 rounded-2xl border border-white/5 bg-white/[0.015] px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {row.all.slice(0, 3).map((opportunity) => (
+                              <span
+                                key={opportunity.id}
+                                className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-medium ${
+                                  opportunity.status === "recovered"
+                                    ? "border-emerald-500/15 bg-emerald-500/5 text-emerald-300"
+                                    : "border-white/10 bg-white/5 text-gray-400"
+                                }`}
+                              >
+                                {typeLabel(opportunity.type)} · {statusLabel(opportunity.status)} · {formatMoney(Number(opportunity.estimated_value || 0))}
+                              </span>
+                            ))}
+                            {row.all.length > 3 && (
+                              <span className="text-[10px] text-gray-600">
+                                +{row.all.length - 3} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-5 flex flex-wrap gap-2.5">
                         <button
                           type="button"
-                          onClick={() =>
-                            setSelectedCustomer(customer)
-                          }
-                          className="rounded-xl border border-indigo-500/20 px-4 py-2.5 text-sm text-indigo-400 hover:bg-indigo-500/10"
+                          onClick={() => setSelectedCustomer(row.customer)}
+                          className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
                         >
                           View
                         </button>
-
                         <button
                           type="button"
-                          onClick={() => openEditModal(customer)}
-                          className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-gray-300 hover:bg-white/5"
+                          onClick={() => openEdit(row.customer)}
+                          className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5 hover:text-white"
                         >
                           Edit
                         </button>
-
                         <button
                           type="button"
-                          onClick={() => deleteCustomer(customer)}
-                          className="rounded-xl border border-red-500/20 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10"
+                          onClick={() => void deleteCustomer(row.customer)}
+                          disabled={deletingId === row.customer.id}
+                          className="rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-2.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Delete
+                          {deletingId === row.customer.id ? "Deleting…" : "Delete"}
                         </button>
+                        {row.customer.email && (
+                          <a
+                            href={`mailto:${row.customer.email}`}
+                            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
+                          >
+                            Email
+                          </a>
+                        )}
+                        {row.customer.phone && (
+                          <a
+                            href={`tel:${row.customer.phone}`}
+                            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
+                          >
+                            Call
+                          </a>
+                        )}
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
           </section>
 
-          <footer className="py-8 text-center text-xs text-gray-600">
+          <footer className="py-10 text-center text-xs text-gray-600">
             REVORA · Revenue Recovery Engine
           </footer>
         </div>
-      </section>
+      </main>
 
-      {/* Customer 360 */}
-      {selectedCustomer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-5">
-          <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-white/10 bg-[#0c1016]">
-            <div className="sticky top-0 border-b border-white/10 bg-[#0c1016]/95 px-6 py-6 backdrop-blur">
-              <div className="flex items-center justify-between gap-5">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/15 text-sm font-bold text-indigo-400">
-                    {getInitials(selectedCustomer.name)}
-                  </div>
-
-                  <div>
-                    <p className="text-[10px] font-semibold tracking-[0.18em] text-indigo-500">
-                      CUSTOMER 360
-                    </p>
-
-                    <h2 className="mt-1 text-2xl font-semibold">
-                      {selectedCustomer.name}
-                    </h2>
-
-                    <p className="text-sm text-gray-500">
-                      {selectedCustomer.email ||
-                        selectedCustomer.phone ||
-                        "No contact information"}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedCustomer(null)}
-                  className="text-2xl text-gray-500 hover:text-white"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 sm:p-8">
-              {(() => {
-                const customerOpportunities =
-                  getCustomerOpportunities(selectedCustomer.id);
-
-                const customerFollowUps =
-                  getCustomerFollowUps(selectedCustomer.id);
-
-                const recovered =
-                  getCustomerRevenue(selectedCustomer.id);
-
-                const pipeline =
-                  getCustomerPipeline(selectedCustomer.id);
-
-                const potential =
-                  customerOpportunities.reduce(
-                    (sum, item) =>
-                      sum + Number(item.estimated_value || 0),
-                    0
-                  );
-
-                return (
-                  <>
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500">
-                          Contact
-                        </p>
-
-                        <p className="mt-2 text-sm">
-                          {selectedCustomer.email || "No email"}
-                        </p>
-
-                        <p className="mt-1 text-sm text-gray-500">
-                          {selectedCustomer.phone || "No phone"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500">
-                          Address
-                        </p>
-
-                        <p className="mt-2 text-sm">
-                          {selectedCustomer.address || "No address"}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500">
-                          Customer Since
-                        </p>
-
-                        <p className="mt-2 text-sm">
-                          {formatDate(selectedCustomer.created_at)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                      <CustomerMetric
-                        label="Potential"
-                        value={formatMoney(potential)}
-                      />
-
-                      <CustomerMetric
-                        label="Active Pipeline"
-                        value={formatMoney(pipeline)}
-                      />
-
-                      <CustomerMetric
-                        label="Recovered"
-                        value={formatMoney(recovered)}
-                        green
-                      />
-
-                      <CustomerMetric
-                        label="Follow-Ups"
-                        value={String(customerFollowUps.length)}
-                      />
-                    </div>
-
-                    <section className="mt-8">
-                      <p className="text-[10px] font-semibold tracking-[0.18em] text-indigo-500">
-                        RECOVERY HISTORY
-                      </p>
-
-                      <h3 className="mt-2 text-xl font-semibold">
-                        Opportunities
-                      </h3>
-
-                      <div className="mt-4 space-y-3">
-                        {customerOpportunities.length === 0 ? (
-                          <div className="rounded-2xl border border-white/10 p-6 text-sm text-gray-500">
-                            No recovery opportunities for this customer yet.
-                          </div>
-                        ) : (
-                          customerOpportunities.map((item) => (
-                            <div
-                              key={item.id}
-                              className="rounded-2xl border border-white/10 bg-white/[0.02] p-5"
-                            >
-                              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                                <div>
-                                  <h4 className="font-semibold">
-                                    {item.title}
-                                  </h4>
-
-                                  <p className="mt-2 text-xs text-gray-500">
-                                    {item.type.replaceAll("_", " ")} ·{" "}
-                                    {formatDate(item.created_at)}
-                                  </p>
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-6">
-                                  <div>
-                                    <p className="text-[10px] text-gray-500">
-                                      VALUE
-                                    </p>
-
-                                    <p className="mt-1 font-semibold">
-                                      {formatMoney(
-                                        Number(item.estimated_value || 0)
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] text-gray-500">
-                                      PRIORITY
-                                    </p>
-
-                                    <p className="mt-1 font-semibold text-indigo-400">
-                                      {item.priority_score}
-                                    </p>
-                                  </div>
-
-                                  <div>
-                                    <p className="text-[10px] text-gray-500">
-                                      PROBABILITY
-                                    </p>
-
-                                    <p className="mt-1 font-semibold text-indigo-400">
-                                      {item.probability_score}%
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </section>
-
-                    <section className="mt-8">
-                      <p className="text-[10px] font-semibold tracking-[0.18em] text-indigo-500">
-                        RECOVERY ACTIONS
-                      </p>
-
-                      <h3 className="mt-2 text-xl font-semibold">
-                        Follow-Up History
-                      </h3>
-
-                      <div className="mt-4 rounded-2xl border border-white/10">
-                        {customerFollowUps.length === 0 ? (
-                          <div className="p-6 text-sm text-gray-500">
-                            No follow-ups recorded for this customer.
-                          </div>
-                        ) : (
-                          customerFollowUps.map((item) => (
-                            <div
-                              key={item.id}
-                              className="flex flex-col gap-2 border-b border-white/10 p-5 last:border-0 sm:flex-row sm:items-center sm:justify-between"
-                            >
-                              <div>
-                                <p className="text-sm font-semibold capitalize">
-                                  {item.channel} follow-up
-                                </p>
-
-                                <p className="mt-1 text-xs text-gray-500">
-                                  {item.scheduled_at
-                                    ? `Scheduled ${formatDateTime(
-                                        item.scheduled_at
-                                      )}`
-                                    : `Created ${formatDateTime(
-                                        item.created_at
-                                      )}`}
-                                </p>
-                              </div>
-
-                              <span className="w-fit rounded-lg bg-white/5 px-3 py-1.5 text-xs capitalize text-gray-400">
-                                {item.status}
-                              </span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </section>
-
-                    <section className="mt-8 rounded-3xl border border-emerald-500/20 bg-emerald-500/[0.03] p-6 sm:p-8">
-                      <p className="text-[10px] font-semibold tracking-[0.18em] text-emerald-500">
-                        REVENUE RECOVERED
-                      </p>
-
-                      <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <h3 className="text-xl font-semibold">
-                          Actual recovered revenue
-                        </h3>
-
-                        <p className="text-3xl font-semibold text-emerald-400">
-                          {formatMoney(recovered)}
-                        </p>
-                      </div>
-                    </section>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add / Edit */}
-      {showModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-5">
-          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#0c1016] p-6 shadow-2xl">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-[10px] font-semibold tracking-[0.18em] text-indigo-500">
-                  CUSTOMER
-                </p>
-
-                <h2 className="mt-2 text-xl font-semibold">
-                  {editingCustomer ? "Edit Customer" : "Add Customer"}
-                </h2>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => closeModal()}
-                disabled={saving}
-                className="text-2xl text-gray-500 hover:text-white"
-              >
-                ×
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-              <Input
-                label="Name *"
+      {(showCreate || editingCustomer) && (
+        <Modal
+          title={editingCustomer ? "Edit Customer" : "Add Customer"}
+          description={
+            editingCustomer
+              ? "Keep customer contact details accurate for recovery workflows."
+              : "Create a customer account so Revora can attach opportunities and recovery history."
+          }
+          onClose={closeModal}
+        >
+          <form onSubmit={saveCustomer} className="space-y-5">
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-400">
+                Customer name
+              </label>
+              <input
+                autoFocus
                 value={form.name}
-                placeholder="Customer name"
-                onChange={(value) =>
-                  setForm({ ...form, name: value })
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, name: event.target.value }))
                 }
+                placeholder="Sarah Jenkins"
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
               />
+            </div>
 
-              <Input
-                label="Email"
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-400">
+                Email
+              </label>
+              <input
                 type="email"
                 value={form.email}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, email: event.target.value }))
+                }
                 placeholder="customer@example.com"
-                onChange={(value) =>
-                  setForm({ ...form, email: value })
-                }
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
               />
+            </div>
 
-              <Input
-                label="Phone"
+            <div>
+              <label className="mb-2 block text-xs font-semibold text-gray-400">
+                Phone
+              </label>
+              <input
+                type="tel"
                 value={form.phone}
-                placeholder="+1 555 123 4567"
-                onChange={(value) =>
-                  setForm({ ...form, phone: value })
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, phone: event.target.value }))
                 }
+                placeholder="(512) 555-0141"
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
               />
+            </div>
 
-              <div>
-                <label className="mb-2 block text-sm text-gray-400">
-                  Address
-                </label>
-
-                <textarea
-                  value={form.address}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      address: event.target.value,
-                    })
-                  }
-                  rows={3}
-                  placeholder="Customer address"
-                  className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-                />
+            {error && (
+              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-300">
+                {error}
               </div>
+            )}
 
-              {error && (
-                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                  {error}
-                </div>
-              )}
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => closeModal()}
-                  disabled={saving}
-                  className="flex-1 rounded-xl border border-white/10 px-5 py-3 text-sm font-semibold text-gray-300 hover:bg-white/5"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-50"
-                >
-                  {saving
-                    ? "Saving..."
-                    : editingCustomer
-                      ? "Save Changes"
-                      : "Add Customer"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            <div className="flex justify-end gap-3 pt-1">
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={saving}
+                className="rounded-2xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-2xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving…" : editingCustomer ? "Save Changes" : "Create Customer"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
-    </main>
-  );
-}
 
-function CustomerMetric({
-  label,
-  value,
-  green,
-}: {
-  label: string;
-  value: string;
-  green?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-        {label}
-      </p>
+      {selectedCustomer && (
+        <Modal
+          title={selectedCustomer.name}
+          description="Customer recovery profile"
+          onClose={() => setSelectedCustomer(null)}
+        >
+          {(() => {
+            const items = opportunities.filter(
+              (item) => item.customer_id === selectedCustomer.id,
+            );
+            const pipeline = items
+              .filter((item) => !["recovered", "closed", "lost"].includes(item.status))
+              .reduce((sum, item) => sum + Number(item.estimated_value || 0), 0);
+            const recovered = items
+              .filter((item) => item.status === "recovered")
+              .reduce((sum, item) => sum + Number(item.estimated_value || 0), 0);
 
-      <p
-        className={`mt-2 text-2xl font-semibold ${
-          green ? "text-emerald-400" : "text-white"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
+            return (
+              <div className="space-y-5">
+                <div className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-500/15 bg-indigo-500/10 text-sm font-bold text-indigo-300">
+                    {getInitials(selectedCustomer.name)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-base font-semibold text-white">
+                      {selectedCustomer.name}
+                    </p>
+                    {selectedCustomer.email && (
+                      <p className="mt-1 break-all text-sm text-gray-500">
+                        {selectedCustomer.email}
+                      </p>
+                    )}
+                    {selectedCustomer.phone && (
+                      <p className="mt-1 text-sm text-gray-500">
+                        {selectedCustomer.phone}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-function Input({
-  label,
-  value,
-  placeholder,
-  type = "text",
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder: string;
-  type?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label className="mb-2 block text-sm text-gray-400">
-        {label}
-      </label>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                    <p className="text-[10px] tracking-[0.14em] text-gray-600">OPPORTUNITIES</p>
+                    <p className="mt-2 text-xl font-semibold text-white">{items.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                    <p className="text-[10px] tracking-[0.14em] text-gray-600">PIPELINE</p>
+                    <p className="mt-2 text-xl font-semibold text-white">{formatMoney(pipeline)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/5 p-4">
+                    <p className="text-[10px] tracking-[0.14em] text-emerald-500/70">RECOVERED</p>
+                    <p className="mt-2 text-xl font-semibold text-emerald-300">{formatMoney(recovered)}</p>
+                  </div>
+                </div>
 
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-indigo-500"
-      />
+                <div>
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+                    Opportunity history
+                  </p>
+                  <div className="space-y-2">
+                    {items.length === 0 ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-5 text-sm text-gray-500">
+                        No opportunity history yet.
+                      </div>
+                    ) : (
+                      items.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-white">
+                              {cleanTitle(item.title)}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-600">
+                              {typeLabel(item.type)} · {statusLabel(item.status)}
+                            </p>
+                          </div>
+                          <p className="shrink-0 text-sm font-semibold text-white">
+                            {formatMoney(Number(item.estimated_value || 0))}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </Modal>
+      )}
     </div>
   );
 }
