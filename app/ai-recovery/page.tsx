@@ -39,6 +39,10 @@ function scoringType(type: string) {
   return "no_follow_up" as const;
 }
 
+function cleanTitle(title: string) {
+  return title.replace(/^\[REVORA DEMO\]\s*/i, "").trim();
+}
+
 export default function AIRecoveryPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -176,37 +180,35 @@ export default function AIRecoveryPage() {
               Number(opportunity.estimated_value || 0),
             );
 
-            const hoursSinceCreated = opportunity.created_at
-              ? Math.max(
-                  0,
-                  (Date.now() -
-                    new Date(opportunity.created_at).getTime()) /
-                    (1000 * 60 * 60),
-                )
-              : 24;
+            // Keep the business scores stored in Supabase intact.
+            // The AI Recovery score is a presentation/ranking score that
+            // blends the existing business signals into one clear number.
+            const priority = Math.max(
+              0,
+              Math.min(100, Number(opportunity.priority_score || 0)),
+            );
+            const probability = Math.max(
+              0,
+              Math.min(100, Number(opportunity.probability_score || 0)),
+            );
+            const intent = Math.max(
+              0,
+              Math.min(100, Number(opportunity.intent_score || 0)),
+            );
 
-            const score = calculateOpportunityScore({
-              type: scoringType(opportunity.type),
-              revenue: value,
-              hoursSinceCreated,
-              status:
-                opportunity.status as
-                  | "new"
-                  | "contacted"
-                  | "in_progress"
-                  | "recovered"
-                  | "lost",
-              customerResponded: false,
-              followUpCount: 0,
-            });
+            const recoveryScore = Math.round(
+              priority * 0.5 +
+                probability * 0.3 +
+                intent * 0.2,
+            );
 
-          return {
-  ...opportunity,
-  recoveryScore: score.score,
-  expectedRecovery: Math.round(
-    value * (score.recoveryProbability / 100),
-  ),
-};
+            return {
+              ...opportunity,
+              recoveryScore,
+              expectedRecovery: Math.round(
+                value * (probability / 100),
+              ),
+            };
           })
           .sort(
             (a, b) =>
@@ -586,12 +588,10 @@ Best regards`
         err,
       );
 
-      alert(
-        `Unexpected error: ${
-          err instanceof Error
-            ? err.message
-            : String(err)
-        }`,
+      setError(
+        err instanceof Error
+          ? err.message
+          : String(err),
       );
     } finally {
       setFollowUpSaving(false);
@@ -605,7 +605,7 @@ Best regards`
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#07090d] text-white">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.10),_transparent_28%),#07090d] text-white">
         <div className="flex min-h-screen">
           <Sidebar />
 
@@ -626,43 +626,43 @@ Best regards`
   }
 
   return (
-    <main className="min-h-screen bg-[#07090d] text-white">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_right,_rgba(99,102,241,0.10),_transparent_28%),#07090d] text-white">
       <div className="flex min-h-screen">
 
         {/* SHARED SIDEBAR */}
         <Sidebar />
 
         {/* MAIN CONTENT */}
-        <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-12">
-          <div className="mx-auto max-w-7xl">
+        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 sm:py-7 lg:px-10 lg:py-8">
+          <div className="mx-auto max-w-[1500px]">
 
             {/* HEADER */}
             <div className="mb-8">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
-                    REVORA · AI ENGINE
+                    REVORA · RECOVERY ENGINE
                   </p>
 
-                  <h1 className="mt-2 text-4xl font-semibold tracking-tight">
+                  <h1 className="mt-2 text-4xl font-semibold tracking-tight sm:text-5xl">
                     Revenue Recovery Intelligence
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-                    Revora ranks active opportunities by recovery potential and tells your team what to do next.
+                    Revora ranks active opportunities by recovery potential, explains why they matter, and turns the next best action into a workflow.
                   </p>
                 </div>
 
                 {opportunities.length > 0 && (
-                  <div className="rounded-2xl border border-white/10 bg-[#0c1016] px-4 py-3">
+                  <div className="rounded-2xl border border-emerald-500/15 bg-[#0c1016]/90 px-4 py-3 shadow-lg shadow-black/20">
                     <div className="flex items-center gap-3">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400">
-                        ✦
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
                       </span>
 
                       <div>
                         <p className="text-xs font-semibold text-white">
-                          Recovery engine active
+                          Decision engine active
                         </p>
 
                         <p className="mt-0.5 text-[11px] text-gray-500">
@@ -703,7 +703,7 @@ Best regards`
             )}
 
             {/* METRICS */}
-            <div className="mb-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard
                 label="Recoverable Revenue"
                 value={formatCurrency(
@@ -737,35 +737,41 @@ Best regards`
               />
             </div>
 
-            {/* AI EXPLANATION */}
+            {/* DECISION ENGINE */}
             {opportunities.length > 0 && (
-              <div className="mb-10 rounded-3xl border border-indigo-500/20 bg-gradient-to-r from-indigo-500/[0.08] via-[#0c1016] to-[#0c1016] p-6">
-                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-start gap-4">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 text-lg text-indigo-400">
-                      ✦
+              <div className="mb-8 overflow-hidden rounded-[28px] border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.10] via-[#0c1016] to-[#0c1016] shadow-2xl shadow-black/20">
+                <div className="flex flex-col gap-6 p-6 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-indigo-400/20 bg-indigo-500/10 text-indigo-300">
+                        ✦
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white">Revora decision engine</p>
+                        <p className="mt-0.5 text-xs text-gray-500">Scores value, priority, intent, and recovery probability.</p>
+                      </div>
                     </div>
 
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        Revora decision engine
-                      </p>
-
-                      <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-500">
-                        Each opportunity is scored using revenue value, priority, customer intent, and recovery probability. Higher scores move to the top of the queue.
-                      </p>
+                    <div className="mt-6 grid gap-2 sm:grid-cols-4">
+                      {[
+                        ["01", "Detect", "Signals"],
+                        ["02", "Rank", "Recovery score"],
+                        ["03", "Recommend", "Next action"],
+                        ["04", "Recover", "ROI tracked"],
+                      ].map(([step, title, caption]) => (
+                        <div key={step} className="rounded-2xl border border-white/8 bg-black/15 px-3 py-3">
+                          <p className="text-[9px] font-semibold tracking-[0.18em] text-indigo-300">{step}</p>
+                          <p className="mt-1 text-xs font-semibold text-white">{title}</p>
+                          <p className="mt-0.5 text-[10px] text-gray-600">{caption}</p>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
-                  <div className="shrink-0 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-                    <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                      TOP RECOVERY SCORE
-                    </p>
-
-                    <p className="mt-1 text-2xl font-semibold text-indigo-400">
-                      {opportunities[0]?.recoveryScore ??
-                        0}
-                    </p>
+                  <div className="shrink-0 rounded-[24px] border border-white/10 bg-black/20 px-6 py-5 text-left lg:min-w-[180px] lg:text-center">
+                    <p className="text-[10px] font-semibold tracking-[0.18em] text-gray-500">TOP RECOVERY SCORE</p>
+                    <p className="mt-1 text-4xl font-semibold tracking-tight text-indigo-300">{opportunities[0]?.recoveryScore ?? 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-500">Highest-ranked opportunity</p>
                   </div>
                 </div>
               </div>
@@ -776,18 +782,18 @@ Best regards`
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-xl font-semibold">
-                    Recommended Recovery Actions
+                    Priority recovery queue
                   </h2>
 
                   {opportunities.length > 0 && (
                     <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
-                      AI RANKED
+                      AI PRIORITIZED
                     </span>
                   )}
                 </div>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Start at the top. Revora has already prioritized the highest-value recovery opportunities.
+                  Start at the top. Revora has already ranked the opportunities where action can have the greatest recovery impact.
                 </p>
               </div>
 
@@ -864,12 +870,22 @@ Best regards`
                     return (
                       <div
                         key={opportunity.id}
-                        className={`rounded-3xl border bg-[#0c1016] p-6 transition hover:border-indigo-500/20 ${
+                        className={`rounded-[28px] border bg-[#0c1016]/95 p-5 shadow-xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-indigo-500/25 sm:p-6 ${
                           index === 0
                             ? "border-indigo-500/20"
                             : "border-white/10"
                         }`}
                       >
+                        {index === 0 && (
+                          <div className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-indigo-500/15 bg-indigo-500/[0.05] px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-500/15 text-[10px] font-bold text-indigo-300">1</span>
+                              <span className="text-[10px] font-semibold tracking-[0.16em] text-indigo-300">TOP RECOVERY OPPORTUNITY</span>
+                            </div>
+                            <span className="text-[10px] font-medium text-gray-500">Action first</span>
+                          </div>
+                        )}
+
                         {/* TOP ROW */}
                         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                           <div className="flex min-w-0 items-start gap-4">
@@ -917,8 +933,12 @@ Best regards`
 
                               <h3 className="text-lg font-semibold text-white">
                                 {customer?.name ||
-                                  opportunity.title}
+                                  cleanTitle(opportunity.title)}
                               </h3>
+
+                              <p className="mt-1 text-xs font-medium text-indigo-300/80">
+                                {cleanTitle(opportunity.title)}
+                              </p>
 
                               <p className="mt-1 text-sm text-gray-500">
                                 {opportunity.description ||
@@ -928,12 +948,12 @@ Best regards`
                           </div>
 
                           {/* EXPECTED RECOVERY */}
-                          <div className="shrink-0 rounded-2xl border border-white/10 bg-black/20 px-5 py-4 lg:min-w-[190px]">
+                          <div className="shrink-0 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] px-5 py-4 lg:min-w-[210px]">
                             <p className="text-[10px] font-semibold tracking-wider text-gray-500">
                               EXPECTED RECOVERY
                             </p>
 
-                            <p className="mt-1 text-2xl font-semibold text-emerald-400">
+                            <p className="mt-1 text-3xl font-semibold tracking-tight text-emerald-300">
                               {formatCurrency(
                                 expected,
                               )}
@@ -1043,7 +1063,7 @@ Best regards`
                                   : "border border-white/10 bg-white/5 hover:bg-white/10"
                               }`}
                             >
-                              Call
+                              Call customer
 
                               {recommendedChannel ===
                                 "call" && (
@@ -1075,7 +1095,7 @@ Best regards`
                                   : "Customer has no email address"
                               }
                             >
-                              Email
+                              Draft email
 
                               {recommendedChannel ===
                                 "email" && (
@@ -1093,7 +1113,7 @@ Best regards`
                             }
                             className="rounded-xl border border-white/10 px-5 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
                           >
-                            View Opportunity →
+                            Open opportunity →
                           </button>
                         </div>
                       </div>
@@ -1104,7 +1124,7 @@ Best regards`
             )}
 
             <footer className="py-10 text-center text-xs text-gray-600">
-              REVORA · Revenue Recovery Intelligence
+              REVORA · Recovery Intelligence
             </footer>
           </div>
         </main>
@@ -1365,7 +1385,7 @@ function MetricCard({
   };
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/15">
+    <div className="rounded-3xl border border-white/10 bg-[#0c1016]/95 p-5 shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-white/15">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-gray-400">
           {label}
