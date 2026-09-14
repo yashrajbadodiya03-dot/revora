@@ -200,15 +200,13 @@ export default function AIRecoveryPage() {
               followUpCount: 0,
             });
 
-            return {
-              ...opportunity,
-              priority_score: score.score,
-              probability_score: score.recoveryProbability,
-              recoveryScore: score.score,
-              expectedRecovery: Math.round(
-                value * (score.recoveryProbability / 100),
-              ),
-            };
+          return {
+  ...opportunity,
+  recoveryScore: score.score,
+  expectedRecovery: Math.round(
+    value * (score.recoveryProbability / 100),
+  ),
+};
           })
           .sort(
             (a, b) =>
