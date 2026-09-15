@@ -122,6 +122,13 @@ function cleanDisplayTitle(title: string) {
   return title.replace(/^\[REVORA DEMO\]\s*/i, "").trim();
 }
 
+function cleanDisplayEmail(email: string) {
+  return email.replace(
+    /@demo\.revora\.local$/i,
+    "@example.com",
+  );
+}
+
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/);
 
@@ -329,6 +336,10 @@ function OpportunityCard({
 
   const next = nextStatus(opportunity.status);
 
+  const clientEmail = opportunity.customer?.email
+    ? cleanDisplayEmail(opportunity.customer.email)
+    : null;
+
   return (
     <div
       className={`rounded-2xl border p-4 transition ${
@@ -428,9 +439,9 @@ function OpportunityCard({
           Created {formatDate(opportunity.created_at)}
         </span>
 
-        {!recovered && opportunity.customer?.email && (
+        {!recovered && clientEmail && (
           <a
-            href={`mailto:${opportunity.customer.email}`}
+            href={`mailto:${clientEmail}`}
             className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
           >
             Email Customer
@@ -1678,7 +1689,7 @@ export default function OpportunitiesPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-gray-500">
-                    {selectedOpportunity.title} ·{" "}
+                    {cleanDisplayTitle(selectedOpportunity.title)} ·{" "}
                     {formatMoney(
                       Number(
                         selectedOpportunity.estimated_value || 0,
