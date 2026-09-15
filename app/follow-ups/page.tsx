@@ -41,6 +41,10 @@ const STATUS_LABELS: Record<FollowUpStatus, string> = {
   cancelled: "Cancelled",
 };
 
+function cleanDisplayEmail(email: string) {
+  return email.replace(/@demo\.revora\.local$/i, "@example.com");
+}
+
 export default function FollowUpsPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -575,7 +579,7 @@ export default function FollowUpsPage() {
 
                             {customer?.email && (
                               <a
-                                href={`mailto:${customer.email}`}
+                                href={`mailto:${cleanDisplayEmail(customer.email)}`}
                                 className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
                               >
                                 Email
@@ -699,3 +703,4 @@ function DataItem({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
