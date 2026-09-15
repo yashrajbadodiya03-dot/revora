@@ -27,12 +27,8 @@ export default function ROIPage() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [revenueEvents, setRevenueEvents] = useState<RevenueEvent[]>([]);
   const [businessName, setBusinessName] = useState("Business workspace");
-  const [businessId, setBusinessId] = useState<string | null>(null);
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [recoveringId, setRecoveringId] = useState<string | null>(null);
 
   useEffect(() => {
     void loadROI();
@@ -73,8 +69,6 @@ export default function ROIPage() {
       if (!profile?.business_id) {
         throw new Error("No business workspace found.");
       }
-
-      setBusinessId(profile.business_id);
 
       const {
         data: business,
@@ -146,103 +140,14 @@ export default function ROIPage() {
     }
   }
 
-  async function recordRecovery(opportunity: Opportunity) {
-    if (recoveringId) return;
-
-    setError("");
-    setSuccess("");
-
-    if (!businessId) {
-      setError("Business information is not available.");
-      return;
-    }
-
-    if (opportunity.status === "recovered") {
-      setError("This opportunity has already been recovered.");
-      return;
-    }
-
-    const recoveryValue = Number(opportunity.estimated_value || 0);
-
-    if (recoveryValue <= 0) {
-      setError("This opportunity has no recoverable revenue value.");
-      return;
-    }
-
-    setRecoveringId(opportunity.id);
-
-    try {
-      // The existing database trigger creates the revenue_events row
-      // whenever the opportunity changes to "recovered".
-      const {
-        data: updatedOpportunity,
-        error: updateError,
-      } = await supabase
-        .from("opportunities")
-        .update({
-          status: "recovered",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", opportunity.id)
-        .eq("business_id", businessId)
-        .neq("status", "recovered")
-        .select(
-          "id, title, estimated_value, priority_score, probability_score, status",
-        )
-        .single();
-
-      if (updateError) {
-        const message = updateError.message.toLowerCase();
-
-        if (
-          message.includes("unique") &&
-          message.includes("revenue_events")
-        ) {
-          throw new Error(
-            "Recovery revenue for this opportunity has already been recorded.",
-          );
-        }
-
-        throw new Error(
-          `Recovery failed: ${updateError.message}`,
-        );
-      }
-
-      if (!updatedOpportunity) {
-        throw new Error(
-          "Recovery failed: Revora did not return the updated opportunity.",
-        );
-      }
-
-      if (updatedOpportunity.status !== "recovered") {
-        throw new Error(
-          "Recovery failed: the opportunity was not marked as recovered.",
-        );
-      }
-
-      // Reload both opportunities and revenue events so ROI updates immediately.
-      await loadROI();
-
-      setSuccess(
-        `${opportunity.title || "Opportunity"} recovered successfully. ${formatCurrency(
-          recoveryValue,
-        )} was added to recovered revenue.`,
-      );
-    } catch (err) {
-      console.error("Record recovery error:", err);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to record recovered revenue.",
-      );
-    } finally {
-      setRecoveringId(null);
-    }
-  }
-
   function formatCurrency(value: number) {
     return `$${Math.round(value).toLocaleString()}`;
+  }
+
+  function cleanTitle(title: string | null) {
+    return (title ?? "Untitled Opportunity")
+      .replace(/^\[REVORA DEMO\]\s*/i, "")
+      .trim();
   }
 
   const activeOpportunities = opportunities.filter(
@@ -255,48 +160,56 @@ export default function ROIPage() {
   const totalPotentialRevenue =
     activeOpportunities.reduce(
       (total, opportunity) =>
-        total + Number(opportunity.estimated_value || 0),
+        total +
+        Number(opportunity.estimated_value || 0),
       0,
     );
 
-  const recoveredRevenue = revenueEvents.reduce(
-    (total, event) =>
-      total + Number(event.amount || 0),
-    0,
-  );
+  const recoveredRevenue =
+    revenueEvents.reduce(
+      (total, event) =>
+        total +
+        Number(event.amount || 0),
+      0,
+    );
 
   const totalIdentifiedRevenue =
     opportunities.reduce(
       (total, opportunity) =>
-        total + Number(opportunity.estimated_value || 0),
+        total +
+        Number(opportunity.estimated_value || 0),
       0,
     );
 
-  const expectedRevenue = activeOpportunities.reduce(
-    (total, opportunity) => {
-      const value = Number(
-        opportunity.estimated_value || 0,
-      );
+  const expectedRevenue =
+    activeOpportunities.reduce(
+      (total, opportunity) => {
+        const value = Number(
+          opportunity.estimated_value || 0,
+        );
 
-      const probability = Number(
-        opportunity.probability_score || 0,
-      );
+        const probability = Number(
+          opportunity.probability_score || 0,
+        );
 
-      return total + value * (probability / 100);
-    },
-    0,
-  );
+        return total + value * (probability / 100);
+      },
+      0,
+    );
 
-  const activePipeline = activeOpportunities.reduce(
-    (total, opportunity) =>
-      total + Number(opportunity.estimated_value || 0),
-    0,
-  );
+  const activePipeline =
+    activeOpportunities.reduce(
+      (total, opportunity) =>
+        total +
+        Number(opportunity.estimated_value || 0),
+      0,
+    );
 
+  // High priority starts at 75.
   const highPriorityCount =
     activeOpportunities.filter(
       (opportunity) =>
-        Number(opportunity.priority_score || 0) >= 70,
+        Number(opportunity.priority_score || 0) >= 75,
     ).length;
 
   const recoveryRate =
@@ -336,7 +249,6 @@ export default function ROIPage() {
 
         <div className="min-w-0 flex-1">
           <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-12">
-            {/* HEADER */}
             <div className="mb-8">
               <p className="text-xs font-semibold tracking-[0.18em] text-indigo-500">
                 REVORA · REVENUE INTELLIGENCE
@@ -347,25 +259,11 @@ export default function ROIPage() {
               </h1>
 
               <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-                Measure the revenue Revora is identifying and recovering for{" "}
-                {businessName}.
+                Measure the revenue Revora is identifying and
+                recovering for {businessName}.
               </p>
             </div>
 
-            {/* SUCCESS */}
-            {success && (
-              <div className="mb-5 rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                  Recovery recorded
-                </p>
-
-                <p className="mt-2 text-sm text-gray-300">
-                  {success}
-                </p>
-              </div>
-            )}
-
-            {/* ERROR */}
             {error && (
               <div className="mb-8 rounded-3xl border border-red-500/20 bg-red-500/5 p-6">
                 <p className="text-xs font-semibold uppercase tracking-wider text-red-500">
@@ -378,10 +276,7 @@ export default function ROIPage() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setError("");
-                    void loadROI();
-                  }}
+                  onClick={() => void loadROI()}
                   className="mt-5 rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400"
                 >
                   Try again
@@ -391,13 +286,10 @@ export default function ROIPage() {
 
             {!error && (
               <>
-                {/* KPI GRID */}
                 <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <MetricCard
                     label="Potential Revenue"
-                    value={formatCurrency(
-                      totalPotentialRevenue,
-                    )}
+                    value={formatCurrency(totalPotentialRevenue)}
                     description={`${activeOpportunities.length} active ${
                       activeOpportunities.length === 1
                         ? "opportunity"
@@ -407,9 +299,7 @@ export default function ROIPage() {
 
                   <MetricCard
                     label="Recovered Revenue"
-                    value={formatCurrency(
-                      recoveredRevenue,
-                    )}
+                    value={formatCurrency(recoveredRevenue)}
                     description={`${recoveryRate.toFixed(
                       1,
                     )}% recovery rate`}
@@ -418,23 +308,18 @@ export default function ROIPage() {
 
                   <MetricCard
                     label="Expected Revenue"
-                    value={formatCurrency(
-                      expectedRevenue,
-                    )}
+                    value={formatCurrency(expectedRevenue)}
                     description="Probability-weighted active pipeline"
                     valueClass="text-indigo-400"
                   />
 
                   <MetricCard
                     label="Active Pipeline"
-                    value={formatCurrency(
-                      activePipeline,
-                    )}
-                    description={`${highPriorityCount} high priority`}
+                    value={formatCurrency(activePipeline)}
+                    description={`${highPriorityCount} high-priority active opportunities`}
                   />
                 </div>
 
-                {/* RECOVERY PERFORMANCE */}
                 <section className="rounded-3xl border border-white/10 bg-[#0c1016] p-8">
                   <p className="text-xs font-semibold tracking-[0.16em] text-gray-500">
                     RECOVERY PERFORMANCE
@@ -452,10 +337,7 @@ export default function ROIPage() {
                     </div>
 
                     <p className="text-sm text-emerald-400">
-                      {formatCurrency(
-                        recoveredRevenue,
-                      )}{" "}
-                      recovered
+                      {formatCurrency(recoveredRevenue)} recovered
                     </p>
                   </div>
 
@@ -464,10 +346,7 @@ export default function ROIPage() {
                       className="h-full rounded-full bg-indigo-500 transition-all"
                       style={{
                         width: `${Math.min(
-                          Math.max(
-                            recoveryRate,
-                            0,
-                          ),
+                          Math.max(recoveryRate, 0),
                           100,
                         )}%`,
                       }}
@@ -476,22 +355,15 @@ export default function ROIPage() {
 
                   <div className="mt-3 flex justify-between text-xs">
                     <span className="text-emerald-400">
-                      Recovered:{" "}
-                      {formatCurrency(
-                        recoveredRevenue,
-                      )}
+                      Recovered: {formatCurrency(recoveredRevenue)}
                     </span>
 
                     <span className="text-gray-500">
-                      Potential:{" "}
-                      {formatCurrency(
-                        totalPotentialRevenue,
-                      )}
+                      Potential: {formatCurrency(totalPotentialRevenue)}
                     </span>
                   </div>
                 </section>
 
-                {/* EXPECTED + PIPELINE */}
                 <div className="mt-6 grid gap-6 lg:grid-cols-3">
                   <section className="rounded-3xl border border-white/10 bg-[#0c1016] p-8 lg:col-span-2">
                     <p className="text-xs font-semibold tracking-[0.16em] text-gray-500">
@@ -499,14 +371,12 @@ export default function ROIPage() {
                     </p>
 
                     <h2 className="mt-3 text-4xl font-semibold text-indigo-400">
-                      {formatCurrency(
-                        expectedRevenue,
-                      )}
+                      {formatCurrency(expectedRevenue)}
                     </h2>
 
                     <p className="mt-3 max-w-xl text-sm leading-6 text-gray-500">
-                      Estimated revenue based on the recovery probability of
-                      active opportunities.
+                      Estimated revenue based on the recovery
+                      probability of active opportunities.
                     </p>
                   </section>
 
@@ -517,9 +387,7 @@ export default function ROIPage() {
 
                     <div className="mt-6 grid grid-cols-2 gap-6">
                       <div>
-                        <p className="text-xs text-gray-500">
-                          Active
-                        </p>
+                        <p className="text-xs text-gray-500">Active</p>
 
                         <p className="mt-2 text-3xl font-semibold">
                           {activeOpportunities.length}
@@ -539,7 +407,6 @@ export default function ROIPage() {
                   </section>
                 </div>
 
-                {/* OPPORTUNITY PERFORMANCE */}
                 <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-[#0c1016]">
                   <div className="border-b border-white/10 p-6">
                     <p className="text-xs font-semibold tracking-[0.16em] text-gray-500">
@@ -551,8 +418,8 @@ export default function ROIPage() {
                     </h2>
 
                     <p className="mt-1 text-sm text-gray-500">
-                      Revenue value, probability, and expected recovery for
-                      each opportunity.
+                      Revenue value, probability, and expected recovery
+                      for each opportunity.
                     </p>
                   </div>
 
@@ -568,151 +435,110 @@ export default function ROIPage() {
                         </h3>
 
                         <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
-                          Revenue opportunities will appear here when Revora
-                          identifies recoverable business.
+                          Revenue opportunities will appear here when
+                          Revora identifies recoverable business.
                         </p>
                       </div>
                     ) : (
-                      opportunities.map(
-                        (opportunity, index) => {
-                          const value = Number(
-                            opportunity.estimated_value || 0,
-                          );
+                      opportunities.map((opportunity, index) => {
+                        const value = Number(
+                          opportunity.estimated_value || 0,
+                        );
 
-                          const probability =
-                            Number(
-                              opportunity.probability_score || 0,
+                        const probability = Number(
+                          opportunity.probability_score || 0,
+                        );
+
+                        const isInactive =
+                          opportunity.status === "recovered" ||
+                          opportunity.status === "lost" ||
+                          opportunity.status === "closed";
+
+                        const expected = isInactive
+                          ? 0
+                          : value * (probability / 100);
+
+                        const opportunityRecovered =
+                          revenueEvents
+                            .filter(
+                              (event) =>
+                                event.opportunity_id === opportunity.id,
+                            )
+                            .reduce(
+                              (total, event) =>
+                                total + Number(event.amount || 0),
+                              0,
                             );
 
-                          const isInactive =
-                            opportunity.status === "recovered" ||
-                            opportunity.status === "lost" ||
-                            opportunity.status === "closed";
+                        return (
+                          <div
+                            key={opportunity.id}
+                            className="p-6 transition hover:bg-white/[0.025]"
+                          >
+                            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="min-w-0">
+                                <p className="text-xs text-gray-500">
+                                  Opportunity #{index + 1}
+                                </p>
 
-                          const expected = isInactive
-                            ? 0
-                            : value * (probability / 100);
+                                <h3 className="mt-1 font-semibold text-white">
+                                  {cleanTitle(opportunity.title)}
+                                </h3>
 
-                          const opportunityRecovered =
-                            revenueEvents
-                              .filter(
-                                (event) =>
-                                  event.opportunity_id ===
-                                  opportunity.id,
-                              )
-                              .reduce(
-                                (total, event) =>
-                                  total +
-                                  Number(
-                                    event.amount || 0,
-                                  ),
-                                0,
-                              );
+                                <p className="mt-1 text-xs capitalize text-gray-500">
+                                  {opportunity.status.replaceAll("_", " ")}
+                                </p>
+                              </div>
 
-                          const isRecovering =
-                            recoveringId === opportunity.id;
-
-                          return (
-                            <div
-                              key={opportunity.id}
-                              className="p-6 transition hover:bg-white/[0.025]"
-                            >
-                              <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                                <div className="min-w-0">
-                                  <p className="text-xs text-gray-500">
-                                    Opportunity #{index + 1}
+                              <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                                <div>
+                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                    VALUE
                                   </p>
 
-                                  <h3 className="mt-1 font-semibold text-white">
-                                    {opportunity.title ||
-                                      "Untitled Opportunity"}
-                                  </h3>
-
-                                  <p className="mt-1 text-xs capitalize text-gray-500">
-                                    {opportunity.status.replaceAll(
-                                      "_",
-                                      " ",
-                                    )}
+                                  <p className="mt-1 text-lg font-semibold">
+                                    {formatCurrency(value)}
                                   </p>
                                 </div>
 
-                                <div className="flex flex-col gap-5 lg:items-end">
-                                  <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-                                    <div>
-                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                        VALUE
-                                      </p>
+                                <div>
+                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                    PROBABILITY
+                                  </p>
 
-                                      <p className="mt-1 text-lg font-semibold">
-                                        {formatCurrency(value)}
-                                      </p>
-                                    </div>
+                                  <p className="mt-1 text-lg font-semibold text-indigo-400">
+                                    {probability}%
+                                  </p>
+                                </div>
 
-                                    <div>
-                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                        PROBABILITY
-                                      </p>
+                                <div>
+                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                    EXPECTED
+                                  </p>
 
-                                      <p className="mt-1 text-lg font-semibold text-indigo-400">
-                                        {probability}%
-                                      </p>
-                                    </div>
+                                  <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                    {formatCurrency(expected)}
+                                  </p>
+                                </div>
 
-                                    <div>
-                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                        EXPECTED
-                                      </p>
+                                <div>
+                                  <p className="text-[10px] font-semibold tracking-wider text-gray-500">
+                                    RECOVERED
+                                  </p>
 
-                                      <p className="mt-1 text-lg font-semibold text-emerald-400">
-                                        {formatCurrency(expected)}
-                                      </p>
-                                    </div>
-
-                                    <div>
-                                      <p className="text-[10px] font-semibold tracking-wider text-gray-500">
-                                        RECOVERED
-                                      </p>
-
-                                      <p className="mt-1 text-lg font-semibold text-emerald-400">
-                                        {formatCurrency(
-                                          opportunityRecovered,
-                                        )}
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  {!isInactive ? (
-                                    <button
-                                      type="button"
-                                      disabled={Boolean(recoveringId)}
-                                      onClick={() =>
-                                        void recordRecovery(
-                                          opportunity,
-                                        )
-                                      }
-                                      className="w-full rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                                    >
-                                      {isRecovering
-                                        ? "Recording Recovery..."
-                                        : "Record Recovery"}
-                                    </button>
-                                  ) : (
-                                    <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
-                                      <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                                      Recovered
-                                    </div>
-                                  )}
+                                  <p className="mt-1 text-lg font-semibold text-emerald-400">
+                                    {formatCurrency(opportunityRecovered)}
+                                  </p>
                                 </div>
                               </div>
                             </div>
-                          );
-                        },
-                      )
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </section>
 
-                {/* REVENUE EVENTS */}
                 <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-[#0c1016]">
                   <div className="border-b border-white/10 p-6">
                     <p className="text-xs font-semibold tracking-[0.16em] text-gray-500">
@@ -749,8 +575,7 @@ export default function ROIPage() {
                             </p>
 
                             <p className="mt-1 text-xs text-gray-500">
-                              Source:{" "}
-                              {event.source || "Unknown"}
+                              Source: {event.source || "Unknown"}
                             </p>
                           </div>
 
