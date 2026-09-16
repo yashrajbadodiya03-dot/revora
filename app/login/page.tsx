@@ -87,7 +87,7 @@ export default function LoginPage() {
           {/* Heading */}
           <div className="mb-7 text-center">
            <h1 className="text-[30px] font-semibold tracking-[-0.03em]">
-  LOGIN TEST 123
+  Welcome back
 </h1>
 
             <p className="mt-2 text-sm text-white/40">
