@@ -76,6 +76,7 @@ export default function LoginPage() {
                 <div className="text-sm font-bold tracking-[0.18em]">
                   REVORA
                 </div>
+
                 <div className="text-[10px] tracking-wide text-white/30">
                   REVENUE RECOVERY
                 </div>
@@ -85,9 +86,9 @@ export default function LoginPage() {
 
           {/* Heading */}
           <div className="mb-7 text-center">
-            <h1 className="text-[30px] font-semibold tracking-[-0.03em]">
-              Welcome back
-            </h1>
+           <h1 className="text-[30px] font-semibold tracking-[-0.03em]">
+  LOGIN TEST 123
+</h1>
 
             <p className="mt-2 text-sm text-white/40">
               Sign in to your Revora workspace.
@@ -96,52 +97,6 @@ export default function LoginPage() {
 
           {/* Card */}
           <div className="rounded-2xl border border-white/[0.08] bg-[#0d1117]/90 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl">
-            {/* Google */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={googleLoading || loading}
-              className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/[0.10] bg-white text-sm font-semibold text-[#111] transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M21.805 12.23c0-.79-.07-1.55-.225-2.28H12v4.31h5.495a4.7 4.7 0 0 1-2.04 3.08v2.56h3.3c1.93-1.78 3.05-4.4 3.05-7.67Z"
-                  fill="#4285F4"
-                />
-                <path
-                  d="M12 22c2.755 0 5.065-.91 6.755-2.47l-3.3-2.56c-.91.61-2.07.97-3.455.97-2.66 0-4.91-1.8-5.72-4.22H3.87v2.64A10.2 10.2 0 0 0 12 22Z"
-                  fill="#34A853"
-                />
-                <path
-                  d="M6.28 13.72A6.13 6.13 0 0 1 5.96 12c0-.6.11-1.18.32-1.72V7.64H3.87A10.2 10.2 0 0 0 1.8 12c0 1.64.39 3.19 1.07 4.36l3.41-2.64Z"
-                  fill="#FBBC05"
-                />
-                <path
-                  d="M12 6.06c1.5 0 2.84.52 3.9 1.54l2.93-2.93C17.06 3.05 14.755 2 12 2a10.2 10.2 0 0 0-8.13 4.64l3.41 2.64C8.09 7.86 9.34 6.06 12 6.06Z"
-                  fill="#EA4335"
-                />
-              </svg>
-
-              {googleLoading ? "Connecting..." : "Continue with Google"}
-            </button>
-
-            {/* Divider */}
-            <div className="my-6 flex items-center gap-4">
-              <div className="h-px flex-1 bg-white/[0.08]" />
-
-              <span className="text-[10px] font-medium tracking-[0.16em] text-white/25">
-                OR
-              </span>
-
-              <div className="h-px flex-1 bg-white/[0.08]" />
-            </div>
-
             <form onSubmit={handleLogin}>
               {/* Email */}
               <div>
@@ -193,6 +148,55 @@ export default function LoginPage() {
                 {loading ? "Signing in..." : "Sign in"}
               </button>
             </form>
+
+            {/* Divider */}
+            <div className="my-6 flex items-center gap-4">
+              <div className="h-px flex-1 bg-white/[0.08]" />
+
+              <span className="text-[10px] font-medium tracking-[0.16em] text-white/25">
+                OR
+              </span>
+
+              <div className="h-px flex-1 bg-white/[0.08]" />
+            </div>
+
+            {/* Google */}
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={googleLoading || loading}
+              className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/[0.10] bg-white text-sm font-semibold text-[#111] transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M21.805 12.23c0-.79-.07-1.55-.225-2.28H12v4.31h5.495a4.7 4.7 0 0 1-2.04 3.08v2.56h3.3c1.93-1.78 3.05-4.4 3.05-7.67Z"
+                  fill="#4285F4"
+                />
+
+                <path
+                  d="M12 22c2.755 0 5.065-.91 6.755-2.47l-3.3-2.56c-.91.61-2.07.97-3.455.97-2.66 0-4.91-1.8-5.72-4.22H3.87v2.64A10.2 10.2 0 0 0 12 22Z"
+                  fill="#34A853"
+                />
+
+                <path
+                  d="M6.28 13.72A6.13 6.13 0 0 1 5.96 12c0-.6.11-1.18.32-1.72V7.64H3.87A10.2 10.2 0 0 0 1.8 12c0 1.64.39 3.19 1.07 4.36l3.41-2.64Z"
+                  fill="#FBBC05"
+                />
+
+                <path
+                  d="M12 6.06c1.5 0 2.84.52 3.9 1.54l2.93-2.93C17.06 3.05 14.755 2 12 2a10.2 10.2 0 0 0-8.13 4.64l3.41 2.64C8.09 7.86 9.34 6.06 12 6.06Z"
+                  fill="#EA4335"
+                />
+              </svg>
+
+              {googleLoading ? "Connecting..." : "Continue with Google"}
+            </button>
           </div>
 
           {/* Signup */}
