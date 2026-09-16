@@ -365,7 +365,7 @@ export default function AIRecoveryPage() {
                 0,
             );
 
-            const urgency =
+            const urgency: RecoveryOpportunity["urgency"] =
               recoveryScore >= 85
                 ? "critical"
                 : recoveryScore >= 75
@@ -400,7 +400,7 @@ export default function AIRecoveryPage() {
                 "Respond to inquiry";
             }
 
-            const recoveryChannel =
+            const recoveryChannel: RecoveryOpportunity["recoveryChannel"] =
               opportunity.type ===
               "old_estimate"
                 ? "email"
