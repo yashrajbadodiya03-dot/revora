@@ -233,6 +233,10 @@ function getDefaultFollowUpMessage(
       return `Call ${customerName} to follow up on the previous estimate.`;
     }
 
+    if (opportunity.type === "unanswered_inquiry") {
+      return `Call ${customerName} and respond to their recent service inquiry.`;
+    }
+
     return `Call ${customerName} and follow up on their open opportunity.`;
   }
 
@@ -257,12 +261,52 @@ Best,
 Revora HVAC`;
   }
 
+  if (opportunity.type === "missed_call") {
+    return `Hi ${customerName},
+
+We noticed we missed your call regarding your recent service request. If you still need help, we'd be happy to assist.
+
+Best,
+Revora HVAC`;
+  }
+
   return `Hi ${customerName},
 
 We wanted to follow up on your recent request. If you still need help, we'd be happy to assist.
 
 Best,
 Revora HVAC`;
+}
+
+function getRecoveryChannel(
+  opportunity: Opportunity,
+): "call" | "email" {
+  switch (opportunity.type) {
+    case "old_estimate":
+      return "email";
+
+    case "missed_call":
+      return "call";
+
+    case "unanswered_inquiry":
+      return "call";
+
+    case "no_follow_up":
+      return "call";
+
+    default:
+      return "call";
+  }
+}
+
+function getRecoveryActionLabel(
+  opportunity: Opportunity,
+) {
+  const channel = getRecoveryChannel(opportunity);
+
+  return channel === "email"
+    ? "Create Email Recovery Action"
+    : "Create Recovery Action";
 }
 
 function SectionHeader({
@@ -286,7 +330,9 @@ function SectionHeader({
         </p>
 
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h2 className="text-xl font-semibold text-white">{title}</h2>
+          <h2 className="text-xl font-semibold text-white">
+            {title}
+          </h2>
 
           {typeof count === "number" && (
             <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-gray-400">
@@ -295,12 +341,16 @@ function SectionHeader({
           )}
         </div>
 
-        <p className="mt-1 text-sm text-gray-500">{description}</p>
+        <p className="mt-1 text-sm text-gray-500">
+          {description}
+        </p>
       </div>
 
       {typeof value === "number" && (
         <div className="text-left sm:text-right">
-          <p className="text-xs text-gray-500">Total value</p>
+          <p className="text-xs text-gray-500">
+            Total value
+          </p>
 
           <p className="mt-1 text-lg font-semibold text-white">
             {formatMoney(value)}
@@ -315,30 +365,50 @@ function OpportunityCard({
   opportunity,
   onUpdateStatus,
   onScheduleFollowUp,
+  onCreateRecoveryAction,
   recovered = false,
   updating = false,
+  recoveryCreating = false,
+  recoveryScheduled = false,
 }: {
   opportunity: Opportunity;
   onUpdateStatus: (
     opportunity: Opportunity,
     status: OpportunityStatus,
   ) => void;
-  onScheduleFollowUp: (opportunity: Opportunity) => void;
+  onScheduleFollowUp: (
+    opportunity: Opportunity,
+  ) => void;
+  onCreateRecoveryAction: (
+    opportunity: Opportunity,
+  ) => void;
   recovered?: boolean;
   updating?: boolean;
+  recoveryCreating?: boolean;
+  recoveryScheduled?: boolean;
 }) {
   const customerName =
     opportunity.customer?.name || "Unknown customer";
 
-  const priority = Number(opportunity.priority_score || 0);
-  const probability = Number(opportunity.probability_score || 0);
-  const value = Number(opportunity.estimated_value || 0);
+  const priority = Number(
+    opportunity.priority_score || 0,
+  );
 
-  const next = nextStatus(opportunity.status);
+  const probability = Number(
+    opportunity.probability_score || 0,
+  );
 
-  const clientEmail = opportunity.customer?.email
-    ? cleanDisplayEmail(opportunity.customer.email)
-    : null;
+  const value = Number(
+    opportunity.estimated_value || 0,
+  );
+
+  const next = nextStatus(
+    opportunity.status,
+  );
+
+  const recoveryReady =
+    !recovered &&
+    priority >= 75;
 
   return (
     <div
@@ -378,10 +448,18 @@ function OpportunityCard({
                 >
                   {statusLabel(opportunity.status)}
                 </span>
+
+                {recoveryReady && (
+                  <span className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300">
+                    Recovery Ready
+                  </span>
+                )}
               </div>
 
               <p className="mt-1 text-xs text-gray-500">
-                {cleanDisplayTitle(opportunity.title)}
+                {cleanDisplayTitle(
+                  opportunity.title,
+                )}
               </p>
 
               {opportunity.description && (
@@ -404,7 +482,9 @@ function OpportunityCard({
             </p>
 
             <p className="mt-1 text-[10px] text-gray-600">
-              {recovered ? "Recovered value" : "Potential value"}
+              {recovered
+                ? "Recovered value"
+                : "Potential value"}
             </p>
           </div>
 
@@ -439,56 +519,102 @@ function OpportunityCard({
           Created {formatDate(opportunity.created_at)}
         </span>
 
-        {!recovered && clientEmail && (
-          <a
-            href={`mailto:${clientEmail}`}
-            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-          >
-            Email Customer
-          </a>
-        )}
+        {!recovered &&
+          opportunity.customer?.email && (
+            <a
+              href={`mailto:${opportunity.customer.email}`}
+              className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+            >
+              Email Customer
+            </a>
+          )}
 
-        {!recovered && opportunity.customer?.phone && (
-          <a
-            href={`tel:${opportunity.customer.phone}`}
-            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-          >
-            Call Customer
-          </a>
-        )}
+        {!recovered &&
+          opportunity.customer?.phone && (
+            <a
+              href={`tel:${opportunity.customer.phone}`}
+              className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+            >
+              Call Customer
+            </a>
+          )}
 
         {!recovered && next && (
           <button
             type="button"
-            onClick={() => onUpdateStatus(opportunity, next)}
-            disabled={updating}
+            onClick={() =>
+              onUpdateStatus(
+                opportunity,
+                next,
+              )
+            }
+            disabled={updating || recoveryCreating}
             className="rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {updating
               ? "Updating..."
-              : nextStatusLabel(opportunity.status)}
+              : nextStatusLabel(
+                  opportunity.status,
+                )}
+          </button>
+        )}
+
+        {recoveryReady && (
+          <button
+            type="button"
+            onClick={() =>
+              onCreateRecoveryAction(
+                opportunity,
+              )
+            }
+            disabled={
+              recoveryCreating ||
+              recoveryScheduled ||
+              updating
+            }
+            className={`rounded-xl border px-4 py-2.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              recoveryScheduled
+                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
+            }`}
+          >
+            {recoveryCreating
+              ? "Creating..."
+              : recoveryScheduled
+                ? "Recovery Action Scheduled"
+                : getRecoveryActionLabel(
+                    opportunity,
+                  )}
           </button>
         )}
 
         {!recovered && (
           <button
             type="button"
-            onClick={() => onScheduleFollowUp(opportunity)}
-            disabled={updating}
+            onClick={() =>
+              onScheduleFollowUp(
+                opportunity,
+              )
+            }
+            disabled={
+              updating ||
+              recoveryCreating
+            }
             className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-4 py-2.5 text-xs font-semibold text-indigo-300 transition hover:bg-indigo-500/15 disabled:opacity-50"
           >
             Schedule Follow-Up
           </button>
         )}
 
-        {recovered && opportunity.customer_id && (
-          <Link
-            href="/customers"
-            className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-          >
-            View Customer
-          </Link>
-        )}
+        {recovered &&
+          opportunity.customer_id && (
+            <Link
+              href="/customers"
+              className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+            >
+              View Customer
+            </Link>
+          )}
 
         {recovered && (
           <span className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 px-4 py-2.5 text-xs font-semibold text-emerald-300">
@@ -501,7 +627,10 @@ function OpportunityCard({
 }
 
 export default function OpportunitiesPage() {
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(
+    () => createClient(),
+    [],
+  );
 
   const [opportunities, setOpportunities] =
     useState<Opportunity[]>([]);
@@ -512,35 +641,77 @@ export default function OpportunitiesPage() {
   const [businessId, setBusinessId] =
     useState<string | null>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] =
+    useState(true);
 
-  const [updatingOpportunityId, setUpdatingOpportunityId] =
-    useState<string | null>(null);
-
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const [showCreateModal, setShowCreateModal] =
+  const [saving, setSaving] =
     useState(false);
 
-  const [showInboundModal, setShowInboundModal] =
-    useState(false);
+  const [
+    updatingOpportunityId,
+    setUpdatingOpportunityId,
+  ] = useState<string | null>(null);
 
-  const [showFollowUpModal, setShowFollowUpModal] =
-    useState(false);
+  const [
+    recoveryCreatingOpportunityId,
+    setRecoveryCreatingOpportunityId,
+  ] = useState<string | null>(null);
 
-  const [selectedOpportunity, setSelectedOpportunity] =
-    useState<Opportunity | null>(null);
+  const [
+    scheduledRecoveryIds,
+    setScheduledRecoveryIds,
+  ] = useState<Set<string>>(
+    new Set(),
+  );
 
-  const [opportunityForm, setOpportunityForm] =
-    useState<OpportunityForm>(defaultOpportunityForm);
+  const [error, setError] =
+    useState("");
 
-  const [inboundForm, setInboundForm] =
-    useState<InboundForm>(defaultInboundForm);
+  const [success, setSuccess] =
+    useState("");
 
-  const [followUpForm, setFollowUpForm] =
-    useState<FollowUpForm>(defaultFollowUpForm);
+  const [
+    showCreateModal,
+    setShowCreateModal,
+  ] = useState(false);
+
+  const [
+    showInboundModal,
+    setShowInboundModal,
+  ] = useState(false);
+
+  const [
+    showFollowUpModal,
+    setShowFollowUpModal,
+  ] = useState(false);
+
+  const [
+    selectedOpportunity,
+    setSelectedOpportunity,
+  ] = useState<Opportunity | null>(
+    null,
+  );
+
+  const [
+    opportunityForm,
+    setOpportunityForm,
+  ] = useState<OpportunityForm>(
+    defaultOpportunityForm,
+  );
+
+  const [
+    inboundForm,
+    setInboundForm,
+  ] = useState<InboundForm>(
+    defaultInboundForm,
+  );
+
+  const [
+    followUpForm,
+    setFollowUpForm,
+  ] = useState<FollowUpForm>(
+    defaultFollowUpForm,
+  );
 
   async function loadData() {
     setLoading(true);
@@ -550,9 +721,12 @@ export default function OpportunitiesPage() {
       const {
         data: { user },
         error: userError,
-      } = await supabase.auth.getUser();
+      } =
+        await supabase.auth.getUser();
 
-      if (userError) throw userError;
+      if (userError) {
+        throw userError;
+      }
 
       if (!user) {
         throw new Error(
@@ -560,14 +734,19 @@ export default function OpportunitiesPage() {
         );
       }
 
-      const { data: profile, error: profileError } =
+      const {
+        data: profile,
+        error: profileError,
+      } =
         await supabase
           .from("profiles")
           .select("business_id")
           .eq("id", user.id)
           .maybeSingle();
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        throw profileError;
+      }
 
       if (!profile?.business_id) {
         throw new Error(
@@ -575,11 +754,23 @@ export default function OpportunitiesPage() {
         );
       }
 
-      setBusinessId(profile.business_id);
+      setBusinessId(
+        profile.business_id,
+      );
 
       const [
-        { data: opportunityData, error: opportunityError },
-        { data: customerData, error: customerError },
+        {
+          data: opportunityData,
+          error: opportunityError,
+        },
+        {
+          data: customerData,
+          error: customerError,
+        },
+        {
+          data: followUpData,
+          error: followUpError,
+        },
       ] = await Promise.all([
         supabase
           .from("opportunities")
@@ -606,18 +797,40 @@ export default function OpportunitiesPage() {
               )
             `,
           )
-          .eq("business_id", profile.business_id)
+          .eq(
+            "business_id",
+            profile.business_id,
+          )
           .order("created_at", {
             ascending: false,
           }),
 
         supabase
           .from("customers")
-          .select("id, name, email, phone")
-          .eq("business_id", profile.business_id)
+          .select(
+            "id, name, email, phone",
+          )
+          .eq(
+            "business_id",
+            profile.business_id,
+          )
           .order("name", {
             ascending: true,
           }),
+
+        supabase
+          .from("follow_ups")
+          .select(
+            "id, opportunity_id, status",
+          )
+          .eq(
+            "business_id",
+            profile.business_id,
+          )
+          .eq(
+            "status",
+            "pending",
+          ),
       ]);
 
       if (opportunityError) {
@@ -628,16 +841,50 @@ export default function OpportunitiesPage() {
         throw customerError;
       }
 
-      const normalizedOpportunities: Opportunity[] =
-        (opportunityData || []).map((opportunity) => ({
-          ...opportunity,
-          customer: Array.isArray(opportunity.customer)
-            ? opportunity.customer[0] ?? null
-            : opportunity.customer ?? null,
-        }));
+      if (followUpError) {
+        throw followUpError;
+      }
 
-      setOpportunities(normalizedOpportunities);
-      setCustomers((customerData || []) as Customer[]);
+      const normalizedOpportunities: Opportunity[] =
+        (opportunityData || []).map(
+          (opportunity) => ({
+            ...opportunity,
+            customer:
+              Array.isArray(
+                opportunity.customer,
+              )
+                ? opportunity.customer[0] ??
+                  null
+                : opportunity.customer ??
+                  null,
+          }),
+        );
+
+      const pendingRecoveryIds =
+        new Set<string>();
+
+      (
+        followUpData || []
+      ).forEach((followUp) => {
+        if (followUp.opportunity_id) {
+          pendingRecoveryIds.add(
+            followUp.opportunity_id,
+          );
+        }
+      });
+
+      setScheduledRecoveryIds(
+        pendingRecoveryIds,
+      );
+
+      setOpportunities(
+        normalizedOpportunities,
+      );
+
+      setCustomers(
+        (customerData ||
+          []) as Customer[],
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -653,64 +900,87 @@ export default function OpportunitiesPage() {
     void loadData();
   }, []);
 
-  const activeOpportunities = useMemo(
-    () =>
-      opportunities.filter(
-        (opportunity) =>
-          !["recovered", "closed", "lost"].includes(
-            opportunity.status,
-          ),
-      ),
-    [opportunities],
-  );
+  const activeOpportunities =
+    useMemo(
+      () =>
+        opportunities.filter(
+          (opportunity) =>
+            ![
+              "recovered",
+              "closed",
+              "lost",
+            ].includes(
+              opportunity.status,
+            ),
+        ),
+      [opportunities],
+    );
 
-  const recoveredOpportunities = useMemo(
-    () =>
-      opportunities.filter(
-        (opportunity) =>
-          opportunity.status === "recovered",
-      ),
-    [opportunities],
-  );
+  const recoveredOpportunities =
+    useMemo(
+      () =>
+        opportunities.filter(
+          (opportunity) =>
+            opportunity.status ===
+            "recovered",
+        ),
+      [opportunities],
+    );
 
-  const closedOrLostOpportunities = useMemo(
-    () =>
-      opportunities.filter(
-        (opportunity) =>
-          opportunity.status === "closed" ||
-          opportunity.status === "lost",
-      ),
-    [opportunities],
-  );
+  const closedOrLostOpportunities =
+    useMemo(
+      () =>
+        opportunities.filter(
+          (opportunity) =>
+            opportunity.status ===
+              "closed" ||
+            opportunity.status === "lost",
+        ),
+      [opportunities],
+    );
 
-  const totalPotential = useMemo(
-    () =>
-      activeOpportunities.reduce(
-        (sum, opportunity) =>
-          sum + Number(opportunity.estimated_value || 0),
-        0,
-      ),
-    [activeOpportunities],
-  );
+  const totalPotential =
+    useMemo(
+      () =>
+        activeOpportunities.reduce(
+          (sum, opportunity) =>
+            sum +
+            Number(
+              opportunity.estimated_value ||
+                0,
+            ),
+          0,
+        ),
+      [activeOpportunities],
+    );
 
-  const recoveredRevenue = useMemo(
-    () =>
-      recoveredOpportunities.reduce(
-        (sum, opportunity) =>
-          sum + Number(opportunity.estimated_value || 0),
-        0,
-      ),
-    [recoveredOpportunities],
-  );
+  const recoveredRevenue =
+    useMemo(
+      () =>
+        recoveredOpportunities.reduce(
+          (sum, opportunity) =>
+            sum +
+            Number(
+              opportunity.estimated_value ||
+                0,
+            ),
+          0,
+        ),
+      [recoveredOpportunities],
+    );
 
-  const highPriorityCount = useMemo(
-    () =>
-      activeOpportunities.filter(
-        (opportunity) =>
-          Number(opportunity.priority_score || 0) >= 75,
-      ).length,
-    [activeOpportunities],
-  );
+  const highPriorityCount =
+    useMemo(
+      () =>
+        activeOpportunities.filter(
+          (opportunity) =>
+            Number(
+              opportunity.priority_score ||
+                0,
+            ) >= 75,
+        ).length,
+      [activeOpportunities],
+    );
 
   function resetMessages() {
     setError("");
@@ -718,11 +988,15 @@ export default function OpportunitiesPage() {
   }
 
   function resetOpportunityForm() {
-    setOpportunityForm(defaultOpportunityForm);
+    setOpportunityForm(
+      defaultOpportunityForm,
+    );
   }
 
   function resetInboundForm() {
-    setInboundForm(defaultInboundForm);
+    setInboundForm(
+      defaultInboundForm,
+    );
   }
 
   function closeCreateModal() {
@@ -738,7 +1012,9 @@ export default function OpportunitiesPage() {
   function closeFollowUpModal() {
     setShowFollowUpModal(false);
     setSelectedOpportunity(null);
-    setFollowUpForm(defaultFollowUpForm);
+    setFollowUpForm(
+      defaultFollowUpForm,
+    );
   }
 
   async function createOpportunity(
@@ -748,12 +1024,16 @@ export default function OpportunitiesPage() {
     resetMessages();
 
     if (!businessId) {
-      setError("Business information is not available.");
+      setError(
+        "Business information is not available.",
+      );
       return;
     }
 
     if (!opportunityForm.customerId) {
-      setError("Please select a customer.");
+      setError(
+        "Please select a customer.",
+      );
       return;
     }
 
@@ -761,13 +1041,24 @@ export default function OpportunitiesPage() {
       opportunityForm.estimatedValue,
     );
 
-    if (!opportunityForm.estimatedValue.trim()) {
-      setError("Please enter an estimated value.");
+    if (
+      !opportunityForm.estimatedValue.trim()
+    ) {
+      setError(
+        "Please enter an estimated value.",
+      );
       return;
     }
 
-    if (!Number.isFinite(estimatedValue) || estimatedValue <= 0) {
-      setError("Estimated value must be greater than 0.");
+    if (
+      !Number.isFinite(
+        estimatedValue,
+      ) ||
+      estimatedValue <= 0
+    ) {
+      setError(
+        "Estimated value must be greater than 0.",
+      );
       return;
     }
 
@@ -776,56 +1067,82 @@ export default function OpportunitiesPage() {
     );
 
     if (
-      !Number.isFinite(priorityScore) ||
+      !Number.isFinite(
+        priorityScore,
+      ) ||
       priorityScore < 0 ||
       priorityScore > 100
     ) {
-      setError("Priority Score must be between 0 and 100.");
+      setError(
+        "Priority Score must be between 0 and 100.",
+      );
       return;
     }
 
-    const probabilityScore = Number(
-      opportunityForm.probabilityScore,
-    );
+    const probabilityScore =
+      Number(
+        opportunityForm.probabilityScore,
+      );
 
     if (
-      !Number.isFinite(probabilityScore) ||
+      !Number.isFinite(
+        probabilityScore,
+      ) ||
       probabilityScore < 0 ||
       probabilityScore > 100
     ) {
-      setError("Probability Score must be between 0 and 100.");
+      setError(
+        "Probability Score must be between 0 and 100.",
+      );
       return;
     }
 
-    if (!opportunityForm.title.trim()) {
-      setError("Please enter an opportunity title.");
+    if (
+      !opportunityForm.title.trim()
+    ) {
+      setError(
+        "Please enter an opportunity title.",
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const { error: insertError } = await supabase
+      const {
+        error: insertError,
+      } = await supabase
         .from("opportunities")
         .insert({
           business_id: businessId,
-          customer_id: opportunityForm.customerId,
+          customer_id:
+            opportunityForm.customerId,
           type: opportunityForm.type,
-          title: opportunityForm.title.trim(),
+          title:
+            opportunityForm.title.trim(),
           description:
-            opportunityForm.description.trim() || null,
-          estimated_value: estimatedValue,
-          priority_score: priorityScore,
-          intent_score: priorityScore,
-          probability_score: probabilityScore,
+            opportunityForm.description.trim() ||
+            null,
+          estimated_value:
+            estimatedValue,
+          priority_score:
+            priorityScore,
+          intent_score:
+            priorityScore,
+          probability_score:
+            probabilityScore,
           status: "new",
         });
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        throw insertError;
+      }
 
       closeCreateModal();
 
-      setSuccess("Opportunity created successfully.");
+      setSuccess(
+        "Opportunity created successfully.",
+      );
 
       await loadData();
     } catch (err) {
@@ -846,12 +1163,16 @@ export default function OpportunitiesPage() {
     resetMessages();
 
     if (!businessId) {
-      setError("Business information is not available.");
+      setError(
+        "Business information is not available.",
+      );
       return;
     }
 
     if (!inboundForm.customerId) {
-      setError("Please select a customer.");
+      setError(
+        "Please select a customer.",
+      );
       return;
     }
 
@@ -859,39 +1180,58 @@ export default function OpportunitiesPage() {
       inboundForm.estimatedValue,
     );
 
-    if (!inboundForm.estimatedValue.trim()) {
-      setError("Please enter an estimated value.");
+    if (
+      !inboundForm.estimatedValue.trim()
+    ) {
+      setError(
+        "Please enter an estimated value.",
+      );
       return;
     }
 
-    if (!Number.isFinite(estimatedValue) || estimatedValue <= 0) {
-      setError("Estimated value must be greater than 0.");
+    if (
+      !Number.isFinite(
+        estimatedValue,
+      ) ||
+      estimatedValue <= 0
+    ) {
+      setError(
+        "Estimated value must be greater than 0.",
+      );
       return;
     }
 
     setSaving(true);
 
     try {
-      const { error: insertError } = await supabase
+      const {
+        error: insertError,
+      } = await supabase
         .from("inbound_events")
         .insert({
           business_id: businessId,
-          customer_id: inboundForm.customerId,
-          event_type: inboundForm.eventType,
+          customer_id:
+            inboundForm.customerId,
+          event_type:
+            inboundForm.eventType,
           status: "open",
-          estimated_value: estimatedValue,
+          estimated_value:
+            estimatedValue,
           details: {
             description:
-              inboundForm.description.trim() || null,
+              inboundForm.description.trim() ||
+              null,
           },
         });
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        throw insertError;
+      }
 
       closeInboundModal();
 
       setSuccess(
-        "Inbound event created. Revora will create the recovery opportunity automatically.",
+        "Inbound event received. The recovery opportunity is now entering the pipeline.",
       );
 
       await loadData();
@@ -911,19 +1251,29 @@ export default function OpportunitiesPage() {
     status: OpportunityStatus,
   ) {
     resetMessages();
+
     setSaving(true);
-    setUpdatingOpportunityId(opportunity.id);
+
+    setUpdatingOpportunityId(
+      opportunity.id,
+    );
 
     try {
       if (status === "contacted") {
-        const { data, error: rpcError } = await supabase.rpc(
+        const {
+          data,
+          error: rpcError,
+        } = await supabase.rpc(
           "mark_opportunity_contacted",
           {
-            opportunity_id: opportunity.id,
+            opportunity_id:
+              opportunity.id,
           },
         );
 
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+          throw rpcError;
+        }
 
         if (!data) {
           throw new Error(
@@ -932,17 +1282,27 @@ export default function OpportunitiesPage() {
         }
 
         setSuccess(
-          `${opportunity.title} marked as contacted.`,
+          `${cleanDisplayTitle(
+            opportunity.title,
+          )} marked as contacted.`,
         );
-      } else if (status === "qualified") {
-        const { data, error: rpcError } = await supabase.rpc(
+      } else if (
+        status === "qualified"
+      ) {
+        const {
+          data,
+          error: rpcError,
+        } = await supabase.rpc(
           "mark_opportunity_qualified",
           {
-            opportunity_id: opportunity.id,
+            opportunity_id:
+              opportunity.id,
           },
         );
 
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+          throw rpcError;
+        }
 
         if (!data) {
           throw new Error(
@@ -951,17 +1311,27 @@ export default function OpportunitiesPage() {
         }
 
         setSuccess(
-          `${opportunity.title} marked as qualified.`,
+          `${cleanDisplayTitle(
+            opportunity.title,
+          )} marked as qualified.`,
         );
-      } else if (status === "recovered") {
-        const { data, error: rpcError } = await supabase.rpc(
+      } else if (
+        status === "recovered"
+      ) {
+        const {
+          data,
+          error: rpcError,
+        } = await supabase.rpc(
           "mark_opportunity_recovered",
           {
-            opportunity_id: opportunity.id,
+            opportunity_id:
+              opportunity.id,
           },
         );
 
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+          throw rpcError;
+        }
 
         if (!data) {
           throw new Error(
@@ -970,24 +1340,39 @@ export default function OpportunitiesPage() {
         }
 
         setSuccess(
-          `${opportunity.title} marked as recovered.`,
+          `${cleanDisplayTitle(
+            opportunity.title,
+          )} marked as recovered.`,
         );
       } else {
-        const { error: updateError } = await supabase
+        const {
+          error: updateError,
+        } = await supabase
           .from("opportunities")
           .update({
             status,
-            updated_at: new Date().toISOString(),
+            updated_at:
+              new Date().toISOString(),
           })
-          .eq("id", opportunity.id)
-          .eq("business_id", businessId);
+          .eq(
+            "id",
+            opportunity.id,
+          )
+          .eq(
+            "business_id",
+            businessId,
+          );
 
         if (updateError) {
           throw updateError;
         }
 
         setSuccess(
-          `${opportunity.title} moved to ${statusLabel(status)}.`,
+          `${cleanDisplayTitle(
+            opportunity.title,
+          )} moved to ${statusLabel(
+            status,
+          )}.`,
         );
       }
 
@@ -1005,7 +1390,187 @@ export default function OpportunitiesPage() {
       );
     } finally {
       setSaving(false);
-      setUpdatingOpportunityId(null);
+      setUpdatingOpportunityId(
+        null,
+      );
+    }
+  }
+
+  async function createRecoveryAction(
+    opportunity: Opportunity,
+  ) {
+    resetMessages();
+
+    if (!businessId) {
+      setError(
+        "Business information is not available.",
+      );
+      return;
+    }
+
+    if (
+      opportunity.status ===
+        "recovered" ||
+      opportunity.status ===
+        "closed" ||
+      opportunity.status ===
+        "lost"
+    ) {
+      setError(
+        "Recovery actions can only be created for active opportunities.",
+      );
+      return;
+    }
+
+    const priority = Number(
+      opportunity.priority_score || 0,
+    );
+
+    if (priority < 75) {
+      setError(
+        "This opportunity is not currently high priority.",
+      );
+      return;
+    }
+
+    if (
+      scheduledRecoveryIds.has(
+        opportunity.id,
+      )
+    ) {
+      setError(
+        "A pending recovery action already exists for this opportunity.",
+      );
+      return;
+    }
+
+    setRecoveryCreatingOpportunityId(
+      opportunity.id,
+    );
+
+    try {
+      const {
+        data: existingPending,
+        error: existingError,
+      } = await supabase
+        .from("follow_ups")
+        .select(
+          "id, channel, status",
+        )
+        .eq(
+          "business_id",
+          businessId,
+        )
+        .eq(
+          "opportunity_id",
+          opportunity.id,
+        )
+        .eq(
+          "status",
+          "pending",
+        )
+        .limit(1);
+
+      if (existingError) {
+        throw existingError;
+      }
+
+      if (
+        existingPending &&
+        existingPending.length > 0
+      ) {
+        setScheduledRecoveryIds(
+          (current) => {
+            const next =
+              new Set(current);
+
+            next.add(
+              opportunity.id,
+            );
+
+            return next;
+          },
+        );
+
+        setSuccess(
+          "A recovery action is already scheduled for this opportunity.",
+        );
+
+        return;
+      }
+
+      const channel =
+        getRecoveryChannel(
+          opportunity,
+        );
+
+      const message =
+        getDefaultFollowUpMessage(
+          opportunity,
+          channel,
+        );
+
+      const scheduledAt =
+        new Date(
+          Date.now() +
+            15 * 60 * 1000,
+        );
+
+      const {
+        error: insertError,
+      } = await supabase
+        .from("follow_ups")
+        .insert({
+          business_id: businessId,
+          opportunity_id:
+            opportunity.id,
+          channel,
+          message,
+          scheduled_at:
+            scheduledAt.toISOString(),
+          status: "pending",
+        });
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      setScheduledRecoveryIds(
+        (current) => {
+          const next =
+            new Set(current);
+
+          next.add(
+            opportunity.id,
+          );
+
+          return next;
+        },
+      );
+
+      setSuccess(
+        `Recovery action created for ${
+          opportunity.customer?.name ||
+          "this customer"
+        }. ${channel === "email" ? "Email" : "Call"} scheduled in 15 minutes.`,
+      );
+
+      await loadData();
+    } catch (err) {
+      console.error(
+        "Recovery action creation error:",
+        err,
+      );
+
+      setError(
+        err instanceof Error
+          ? `Recovery action failed: ${err.message}`
+          : "Recovery action failed.",
+      );
+    } finally {
+      setRecoveryCreatingOpportunityId(
+        null,
+      );
     }
   }
 
@@ -1014,16 +1579,23 @@ export default function OpportunitiesPage() {
   ) {
     resetMessages();
 
-    const channel: "call" | "sms" | "email" = "call";
+    const channel:
+      | "call"
+      | "sms"
+      | "email" =
+      "call";
 
-    setSelectedOpportunity(opportunity);
+    setSelectedOpportunity(
+      opportunity,
+    );
 
     setFollowUpForm({
       channel,
-      message: getDefaultFollowUpMessage(
-        opportunity,
-        channel,
-      ),
+      message:
+        getDefaultFollowUpMessage(
+          opportunity,
+          channel,
+        ),
       scheduledAt: "",
     });
 
@@ -1037,21 +1609,31 @@ export default function OpportunitiesPage() {
     resetMessages();
 
     if (!businessId) {
-      setError("Business information is not available.");
+      setError(
+        "Business information is not available.",
+      );
       return;
     }
 
     if (!selectedOpportunity) {
-      setError("No opportunity selected.");
+      setError(
+        "No opportunity selected.",
+      );
       return;
     }
 
-    if (!followUpForm.message.trim()) {
-      setError("Please enter a follow-up message.");
+    if (
+      !followUpForm.message.trim()
+    ) {
+      setError(
+        "Please enter a follow-up message.",
+      );
       return;
     }
 
-    if (!followUpForm.scheduledAt) {
+    if (
+      !followUpForm.scheduledAt
+    ) {
       setError(
         "Please select a scheduled date and time.",
       );
@@ -1061,24 +1643,72 @@ export default function OpportunitiesPage() {
     setSaving(true);
 
     try {
-      const { error: insertError } = await supabase
+      const {
+        error: existingError,
+      } = await supabase
+        .from("follow_ups")
+        .select("id")
+        .eq(
+          "business_id",
+          businessId,
+        )
+        .eq(
+          "opportunity_id",
+          selectedOpportunity.id,
+        )
+        .eq(
+          "status",
+          "pending",
+        )
+        .limit(1);
+
+      if (existingError) {
+        throw existingError;
+      }
+
+      const {
+        error: insertError,
+      } = await supabase
         .from("follow_ups")
         .insert({
           business_id: businessId,
-          opportunity_id: selectedOpportunity.id,
-          channel: followUpForm.channel,
-          message: followUpForm.message.trim(),
-          scheduled_at: new Date(
-            followUpForm.scheduledAt,
-          ).toISOString(),
+          opportunity_id:
+            selectedOpportunity.id,
+          channel:
+            followUpForm.channel,
+          message:
+            followUpForm.message.trim(),
+          scheduled_at:
+            new Date(
+              followUpForm.scheduledAt,
+            ).toISOString(),
           status: "pending",
         });
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        throw insertError;
+      }
+
+      setScheduledRecoveryIds(
+        (current) => {
+          const next =
+            new Set(current);
+
+          next.add(
+            selectedOpportunity.id,
+          );
+
+          return next;
+        },
+      );
 
       closeFollowUpModal();
 
-      setSuccess("Follow-up scheduled successfully.");
+      setSuccess(
+        "Follow-up scheduled successfully.",
+      );
+
+      await loadData();
     } catch (err) {
       setError(
         err instanceof Error
@@ -1091,18 +1721,26 @@ export default function OpportunitiesPage() {
   }
 
   function handleFollowUpChannelChange(
-    channel: "call" | "sms" | "email",
+    channel:
+      | "call"
+      | "sms"
+      | "email",
   ) {
-    if (!selectedOpportunity) return;
+    if (!selectedOpportunity) {
+      return;
+    }
 
-    setFollowUpForm((current) => ({
-      ...current,
-      channel,
-      message: getDefaultFollowUpMessage(
-        selectedOpportunity,
+    setFollowUpForm(
+      (current) => ({
+        ...current,
         channel,
-      ),
-    }));
+        message:
+          getDefaultFollowUpMessage(
+            selectedOpportunity,
+            channel,
+          ),
+      }),
+    );
   }
 
   return (
@@ -1123,8 +1761,7 @@ export default function OpportunitiesPage() {
                 </h1>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
-                  Find, prioritize, and recover revenue that would otherwise
-                  be left behind.
+                  Find, prioritize, and recover revenue that would otherwise be left behind.
                 </p>
               </div>
 
@@ -1133,11 +1770,13 @@ export default function OpportunitiesPage() {
                   type="button"
                   onClick={() => {
                     resetMessages();
-                    setShowInboundModal(true);
+                    setShowInboundModal(
+                      true,
+                    );
                   }}
                   className="shrink-0 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:border-white/20 hover:bg-white/5"
                 >
-                  Log New Opportunity
+                  Simulate Inbound Event
                 </button>
 
                 <span className="mx-3 hidden h-6 w-px bg-white/10 sm:block" />
@@ -1146,7 +1785,9 @@ export default function OpportunitiesPage() {
                   type="button"
                   onClick={() => {
                     resetMessages();
-                    setShowCreateModal(true);
+                    setShowCreateModal(
+                      true,
+                    );
                   }}
                   className="shrink-0 rounded-xl bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-400"
                 >
@@ -1181,11 +1822,12 @@ export default function OpportunitiesPage() {
                 <section className="mt-8 grid gap-4 md:grid-cols-4">
                   <Metric
                     title="Potential Revenue"
-                    value={formatMoney(totalPotential)}
-                    subtitle={`${
-                      activeOpportunities.length
-                    } active ${
-                      activeOpportunities.length === 1
+                    value={formatMoney(
+                      totalPotential,
+                    )}
+                    subtitle={`${activeOpportunities.length} active ${
+                      activeOpportunities.length ===
+                      1
                         ? "opportunity"
                         : "opportunities"
                     }`}
@@ -1193,9 +1835,12 @@ export default function OpportunitiesPage() {
 
                   <Metric
                     title="Active Opportunities"
-                    value={String(activeOpportunities.length)}
+                    value={String(
+                      activeOpportunities.length,
+                    )}
                     subtitle={
-                      activeOpportunities.length === 1
+                      activeOpportunities.length ===
+                      1
                         ? "Requires recovery action"
                         : "Require recovery action"
                     }
@@ -1203,14 +1848,18 @@ export default function OpportunitiesPage() {
 
                   <Metric
                     title="Recovered Revenue"
-                    value={formatMoney(recoveredRevenue)}
+                    value={formatMoney(
+                      recoveredRevenue,
+                    )}
                     subtitle={`${recoveredOpportunities.length} recovered`}
                     success
                   />
 
                   <Metric
                     title="High Priority"
-                    value={String(highPriorityCount)}
+                    value={String(
+                      highPriorityCount,
+                    )}
                     subtitle="Priority score ≥ 75"
                   />
                 </section>
@@ -1220,31 +1869,61 @@ export default function OpportunitiesPage() {
                     eyebrow="ACTION REQUIRED"
                     title="Active recovery opportunities"
                     description="These opportunities still require action."
-                    count={activeOpportunities.length}
-                    value={totalPotential}
+                    count={
+                      activeOpportunities.length
+                    }
+                    value={
+                      totalPotential
+                    }
                   />
 
                   <div className="mt-5 space-y-4">
-                    {activeOpportunities.length === 0 ? (
+                    {activeOpportunities.length ===
+                    0 ? (
                       <EmptyState
                         title="No active opportunities"
                         description="Your recovery queue is clear. New missed calls, inquiries, estimates, and follow-up gaps will appear here."
-                        actionLabel="Log New Opportunity"
+                        actionLabel="Simulate Inbound Event"
                         onAction={() => {
                           resetMessages();
-                          setShowInboundModal(true);
+                          setShowInboundModal(
+                            true,
+                          );
                         }}
                       />
                     ) : (
                       activeOpportunities.map(
-                        (opportunity) => (
+                        (
+                          opportunity,
+                        ) => (
                           <OpportunityCard
-                            key={opportunity.id}
-                            opportunity={opportunity}
-                            onUpdateStatus={updateStatus}
-                            onScheduleFollowUp={openFollowUpModal}
+                            key={
+                              opportunity.id
+                            }
+                            opportunity={
+                              opportunity
+                            }
+                            onUpdateStatus={
+                              updateStatus
+                            }
+                            onScheduleFollowUp={
+                              openFollowUpModal
+                            }
+                            onCreateRecoveryAction={
+                              createRecoveryAction
+                            }
                             updating={
-                              updatingOpportunityId === opportunity.id
+                              updatingOpportunityId ===
+                              opportunity.id
+                            }
+                            recoveryCreating={
+                              recoveryCreatingOpportunityId ===
+                              opportunity.id
+                            }
+                            recoveryScheduled={
+                              scheduledRecoveryIds.has(
+                                opportunity.id,
+                              )
                             }
                           />
                         ),
@@ -1253,25 +1932,43 @@ export default function OpportunitiesPage() {
                   </div>
                 </section>
 
-                {recoveredOpportunities.length > 0 && (
+                {recoveredOpportunities.length >
+                  0 && (
                   <section className="mt-10">
                     <div className="rounded-3xl border border-emerald-500/10 bg-[#0c1016] p-6 sm:p-8">
                       <SectionHeader
                         eyebrow="RECOVERY HISTORY"
                         title="Recovered revenue"
                         description="Completed recovery opportunities are kept here as historical revenue records."
-                        count={recoveredOpportunities.length}
-                        value={recoveredRevenue}
+                        count={
+                          recoveredOpportunities.length
+                        }
+                        value={
+                          recoveredRevenue
+                        }
                       />
 
                       <div className="mt-5 space-y-4">
                         {recoveredOpportunities.map(
-                          (opportunity) => (
+                          (
+                            opportunity,
+                          ) => (
                             <OpportunityCard
-                              key={opportunity.id}
-                              opportunity={opportunity}
-                              onUpdateStatus={updateStatus}
-                              onScheduleFollowUp={openFollowUpModal}
+                              key={
+                                opportunity.id
+                              }
+                              opportunity={
+                                opportunity
+                              }
+                              onUpdateStatus={
+                                updateStatus
+                              }
+                              onScheduleFollowUp={
+                                openFollowUpModal
+                              }
+                              onCreateRecoveryAction={
+                                createRecoveryAction
+                              }
                               recovered
                             />
                           ),
@@ -1281,24 +1978,40 @@ export default function OpportunitiesPage() {
                   </section>
                 )}
 
-                {closedOrLostOpportunities.length > 0 && (
+                {closedOrLostOpportunities.length >
+                  0 && (
                   <section className="mt-10">
                     <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 sm:p-8">
                       <SectionHeader
                         eyebrow="ARCHIVE"
                         title="Closed & lost"
                         description="Opportunities that are no longer part of the active recovery pipeline."
-                        count={closedOrLostOpportunities.length}
+                        count={
+                          closedOrLostOpportunities.length
+                        }
                       />
 
                       <div className="mt-5 space-y-4">
                         {closedOrLostOpportunities.map(
-                          (opportunity) => (
+                          (
+                            opportunity,
+                          ) => (
                             <OpportunityCard
-                              key={opportunity.id}
-                              opportunity={opportunity}
-                              onUpdateStatus={updateStatus}
-                              onScheduleFollowUp={openFollowUpModal}
+                              key={
+                                opportunity.id
+                              }
+                              opportunity={
+                                opportunity
+                              }
+                              onUpdateStatus={
+                                updateStatus
+                              }
+                              onScheduleFollowUp={
+                                openFollowUpModal
+                              }
+                              onCreateRecoveryAction={
+                                createRecoveryAction
+                              }
                             />
                           ),
                         )}
@@ -1340,26 +2053,43 @@ export default function OpportunitiesPage() {
         <Modal
           title="Create Opportunity"
           description="Add a revenue opportunity directly to the recovery pipeline."
-          onClose={closeCreateModal}
+          onClose={
+            closeCreateModal
+          }
         >
           <form
-            onSubmit={createOpportunity}
+            onSubmit={
+              createOpportunity
+            }
             className="space-y-5"
           >
-            {error && <ModalError message={error} />}
+            {error && (
+              <ModalError
+                message={error}
+              />
+            )}
 
             <Field label="Customer">
               <select
-                value={opportunityForm.customerId}
-                onChange={(event) =>
-                  setOpportunityForm((current) => ({
-                    ...current,
-                    customerId: event.target.value,
-                  }))
+                value={
+                  opportunityForm.customerId
                 }
-                className={selectClass}
+                onChange={(event) =>
+                  setOpportunityForm(
+                    (current) => ({
+                      ...current,
+                      customerId:
+                        event.target
+                          .value,
+                    }),
+                  )
+                }
+                className={
+                  selectClass
+                }
                 style={{
-                  colorScheme: "dark",
+                  colorScheme:
+                    "dark",
                 }}
               >
                 <option
@@ -1369,31 +2099,48 @@ export default function OpportunitiesPage() {
                   Select customer
                 </option>
 
-                {customers.map((customer) => (
-                  <option
-                    key={customer.id}
-                    value={customer.id}
-                    className="bg-[#080b10] text-white"
-                  >
-                    {customer.name}
-                  </option>
-                ))}
+                {customers.map(
+                  (customer) => (
+                    <option
+                      key={
+                        customer.id
+                      }
+                      value={
+                        customer.id
+                      }
+                      className="bg-[#080b10] text-white"
+                    >
+                      {
+                        customer.name
+                      }
+                    </option>
+                  ),
+                )}
               </select>
             </Field>
 
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Type">
                 <select
-                  value={opportunityForm.type}
-                  onChange={(event) =>
-                    setOpportunityForm((current) => ({
-                      ...current,
-                      type: event.target.value as OpportunityType,
-                    }))
+                  value={
+                    opportunityForm.type
                   }
-                  className={selectClass}
+                  onChange={(event) =>
+                    setOpportunityForm(
+                      (current) => ({
+                        ...current,
+                        type: event
+                          .target
+                          .value as OpportunityType,
+                      }),
+                    )
+                  }
+                  className={
+                    selectClass
+                  }
                   style={{
-                    colorScheme: "dark",
+                    colorScheme:
+                      "dark",
                   }}
                 >
                   <option
@@ -1431,15 +2178,23 @@ export default function OpportunitiesPage() {
                   type="number"
                   min="1"
                   step="1"
-                  value={opportunityForm.estimatedValue}
+                  value={
+                    opportunityForm.estimatedValue
+                  }
                   onChange={(event) =>
-                    setOpportunityForm((current) => ({
-                      ...current,
-                      estimatedValue: event.target.value,
-                    }))
+                    setOpportunityForm(
+                      (current) => ({
+                        ...current,
+                        estimatedValue:
+                          event.target
+                            .value,
+                      }),
+                    )
                   }
                   placeholder="5000"
-                  className={fieldClass}
+                  className={
+                    fieldClass
+                  }
                 />
               </Field>
             </div>
@@ -1447,27 +2202,41 @@ export default function OpportunitiesPage() {
             <Field label="Title">
               <input
                 type="text"
-                value={opportunityForm.title}
+                value={
+                  opportunityForm.title
+                }
                 onChange={(event) =>
-                  setOpportunityForm((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
+                  setOpportunityForm(
+                    (current) => ({
+                      ...current,
+                      title:
+                        event.target
+                          .value,
+                    }),
+                  )
                 }
                 placeholder="Missed Call - AC Service Request"
-                className={fieldClass}
+                className={
+                  fieldClass
+                }
               />
             </Field>
 
             <Field label="Description">
               <textarea
                 rows={3}
-                value={opportunityForm.description}
+                value={
+                  opportunityForm.description
+                }
                 onChange={(event) =>
-                  setOpportunityForm((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
+                  setOpportunityForm(
+                    (current) => ({
+                      ...current,
+                      description:
+                        event.target
+                          .value,
+                    }),
+                  )
                 }
                 placeholder="Describe the recovery opportunity..."
                 className={`${fieldClass} resize-none`}
@@ -1481,14 +2250,22 @@ export default function OpportunitiesPage() {
                   min="0"
                   max="100"
                   step="1"
-                  value={opportunityForm.priorityScore}
-                  onChange={(event) =>
-                    setOpportunityForm((current) => ({
-                      ...current,
-                      priorityScore: event.target.value,
-                    }))
+                  value={
+                    opportunityForm.priorityScore
                   }
-                  className={fieldClass}
+                  onChange={(event) =>
+                    setOpportunityForm(
+                      (current) => ({
+                        ...current,
+                        priorityScore:
+                          event.target
+                            .value,
+                      }),
+                    )
+                  }
+                  className={
+                    fieldClass
+                  }
                 />
               </Field>
 
@@ -1498,20 +2275,30 @@ export default function OpportunitiesPage() {
                   min="0"
                   max="100"
                   step="1"
-                  value={opportunityForm.probabilityScore}
-                  onChange={(event) =>
-                    setOpportunityForm((current) => ({
-                      ...current,
-                      probabilityScore: event.target.value,
-                    }))
+                  value={
+                    opportunityForm.probabilityScore
                   }
-                  className={fieldClass}
+                  onChange={(event) =>
+                    setOpportunityForm(
+                      (current) => ({
+                        ...current,
+                        probabilityScore:
+                          event.target
+                            .value,
+                      }),
+                    )
+                  }
+                  className={
+                    fieldClass
+                  }
                 />
               </Field>
             </div>
 
             <ModalActions
-              onCancel={closeCreateModal}
+              onCancel={
+                closeCreateModal
+              }
               saving={saving}
               submitLabel="Create Opportunity"
             />
@@ -1521,28 +2308,128 @@ export default function OpportunitiesPage() {
 
       {showInboundModal && (
         <Modal
-          title="Log New Opportunity"
-          description="Capture a new customer signal and let Revora turn it into a recovery opportunity."
-          onClose={closeInboundModal}
+          title="Simulate Inbound Event"
+          description="Send a realistic customer signal into Revora and watch it enter the recovery pipeline."
+          onClose={
+            closeInboundModal
+          }
         >
           <form
-            onSubmit={createInboundEvent}
+            onSubmit={
+              createInboundEvent
+            }
             className="space-y-5"
           >
-            {error && <ModalError message={error} />}
+            {error && (
+              <ModalError
+                message={error}
+              />
+            )}
+
+            <div className="rounded-2xl border border-indigo-500/15 bg-indigo-500/[0.04] p-4">
+              <div className="flex flex-col gap-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-400">
+                  EVENT SIMULATOR
+                </p>
+
+                <p className="text-xs leading-5 text-gray-500">
+                  Use a preset to inject a realistic revenue signal into this workspace.
+                </p>
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                {[
+                  {
+                    label:
+                      "Missed Emergency Call",
+                    eventType:
+                      "missed_call" as const,
+                    value: "8500",
+                    description:
+                      "After-hours emergency HVAC call that was not answered.",
+                  },
+                  {
+                    label:
+                      "Cooling Inquiry",
+                    eventType:
+                      "inquiry" as const,
+                    value: "4200",
+                    description:
+                      "Website inquiry for AC repair and cooling service.",
+                  },
+                  {
+                    label:
+                      "Old Estimate",
+                    eventType:
+                      "estimate" as const,
+                    value: "7800",
+                    description:
+                      "Previous AC replacement estimate with no recent follow-up.",
+                  },
+                ].map(
+                  (preset) => (
+                    <button
+                      key={
+                        preset.label
+                      }
+                      type="button"
+                      onClick={() =>
+                        setInboundForm(
+                          (
+                            current,
+                          ) => ({
+                            ...current,
+                            eventType:
+                              preset.eventType,
+                            estimatedValue:
+                              preset.value,
+                            description:
+                              preset.description,
+                          }),
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3 text-left transition hover:border-indigo-500/25 hover:bg-indigo-500/[0.05]"
+                    >
+                      <span className="block text-xs font-semibold text-white">
+                        {
+                          preset.label
+                        }
+                      </span>
+
+                      <span className="mt-1 block text-[10px] leading-4 text-gray-600">
+                        {formatMoney(
+                          Number(
+                            preset.value,
+                          ),
+                        )}
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+            </div>
 
             <Field label="Customer">
               <select
-                value={inboundForm.customerId}
-                onChange={(event) =>
-                  setInboundForm((current) => ({
-                    ...current,
-                    customerId: event.target.value,
-                  }))
+                value={
+                  inboundForm.customerId
                 }
-                className={selectClass}
+                onChange={(event) =>
+                  setInboundForm(
+                    (current) => ({
+                      ...current,
+                      customerId:
+                        event.target
+                          .value,
+                    }),
+                  )
+                }
+                className={
+                  selectClass
+                }
                 style={{
-                  colorScheme: "dark",
+                  colorScheme:
+                    "dark",
                 }}
               >
                 <option
@@ -1552,34 +2439,51 @@ export default function OpportunitiesPage() {
                   Select customer
                 </option>
 
-                {customers.map((customer) => (
-                  <option
-                    key={customer.id}
-                    value={customer.id}
-                    className="bg-[#080b10] text-white"
-                  >
-                    {customer.name}
-                  </option>
-                ))}
+                {customers.map(
+                  (customer) => (
+                    <option
+                      key={
+                        customer.id
+                      }
+                      value={
+                        customer.id
+                      }
+                      className="bg-[#080b10] text-white"
+                    >
+                      {
+                        customer.name
+                      }
+                    </option>
+                  ),
+                )}
               </select>
             </Field>
 
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Event Type">
                 <select
-                  value={inboundForm.eventType}
-                  onChange={(event) =>
-                    setInboundForm((current) => ({
-                      ...current,
-                      eventType: event.target.value as
-                        | "missed_call"
-                        | "inquiry"
-                        | "estimate",
-                    }))
+                  value={
+                    inboundForm.eventType
                   }
-                  className={selectClass}
+                  onChange={(event) =>
+                    setInboundForm(
+                      (current) => ({
+                        ...current,
+                        eventType:
+                          event.target
+                            .value as
+                            | "missed_call"
+                            | "inquiry"
+                            | "estimate",
+                      }),
+                    )
+                  }
+                  className={
+                    selectClass
+                  }
                   style={{
-                    colorScheme: "dark",
+                    colorScheme:
+                      "dark",
                   }}
                 >
                   <option
@@ -1610,15 +2514,23 @@ export default function OpportunitiesPage() {
                   type="number"
                   min="1"
                   step="1"
-                  value={inboundForm.estimatedValue}
+                  value={
+                    inboundForm.estimatedValue
+                  }
                   onChange={(event) =>
-                    setInboundForm((current) => ({
-                      ...current,
-                      estimatedValue: event.target.value,
-                    }))
+                    setInboundForm(
+                      (current) => ({
+                        ...current,
+                        estimatedValue:
+                          event.target
+                            .value,
+                      }),
+                    )
                   }
                   placeholder="5000"
-                  className={fieldClass}
+                  className={
+                    fieldClass
+                  }
                 />
               </Field>
             </div>
@@ -1626,12 +2538,18 @@ export default function OpportunitiesPage() {
             <Field label="Description">
               <textarea
                 rows={4}
-                value={inboundForm.description}
+                value={
+                  inboundForm.description
+                }
                 onChange={(event) =>
-                  setInboundForm((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
+                  setInboundForm(
+                    (current) => ({
+                      ...current,
+                      description:
+                        event.target
+                          .value,
+                    }),
+                  )
                 }
                 placeholder="After-hours AC repair request"
                 className={`${fieldClass} resize-none`}
@@ -1644,124 +2562,173 @@ export default function OpportunitiesPage() {
               </p>
 
               <p className="mt-1 text-xs leading-5 text-gray-500">
-                Once submitted, Revora&apos;s database trigger will convert
-                the open inbound event into the appropriate recovery
-                opportunity.
+                Once submitted, Revora&apos;s database trigger will convert the open inbound event into the appropriate recovery opportunity.
               </p>
             </div>
 
             <ModalActions
-              onCancel={closeInboundModal}
+              onCancel={
+                closeInboundModal
+              }
               saving={saving}
-              submitLabel="Create Inbound Event"
+              submitLabel="Simulate Event"
             />
           </form>
         </Modal>
       )}
 
-      {showFollowUpModal && selectedOpportunity && (
-        <Modal
-          title="Schedule Follow-Up"
-          description={`Create a recovery action for ${
-            selectedOpportunity.customer?.name || "this customer"
-          }.`}
-          onClose={closeFollowUpModal}
-        >
-          <form
-            onSubmit={createFollowUp}
-            className="space-y-5"
+      {showFollowUpModal &&
+        selectedOpportunity && (
+          <Modal
+            title="Schedule Follow-Up"
+            description={`Create a recovery action for ${
+              selectedOpportunity.customer
+                ?.name ||
+              "this customer"
+            }.`}
+            onClose={
+              closeFollowUpModal
+            }
           >
-            {error && <ModalError message={error} />}
+            <form
+              onSubmit={
+                createFollowUp
+              }
+              className="space-y-5"
+            >
+              {error && (
+                <ModalError
+                  message={error}
+                />
+              )}
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-xs font-bold text-indigo-400">
-                  {getInitials(
-                    selectedOpportunity.customer?.name ||
-                      "Unknown customer",
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-xs font-bold text-indigo-400">
+                    {getInitials(
+                      selectedOpportunity
+                        .customer
+                        ?.name ||
+                        "Unknown customer",
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      {selectedOpportunity
+                        .customer
+                        ?.name ||
+                        "Unknown customer"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      {
+                        selectedOpportunity.title
+                      }{" "}
+                      ·{" "}
+                      {formatMoney(
+                        Number(
+                          selectedOpportunity.estimated_value ||
+                            0,
+                        ),
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <Field label="Channel">
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      "call",
+                      "sms",
+                      "email",
+                    ] as const
+                  ).map(
+                    (channel) => (
+                      <button
+                        key={
+                          channel
+                        }
+                        type="button"
+                        onClick={() =>
+                          handleFollowUpChannelChange(
+                            channel,
+                          )
+                        }
+                        className={`rounded-xl border px-3 py-3 text-xs font-semibold capitalize transition ${
+                          followUpForm.channel ===
+                          channel
+                            ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+                            : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
+                        }`}
+                      >
+                        {
+                          channel
+                        }
+                      </button>
+                    ),
                   )}
                 </div>
+              </Field>
 
-                <div>
-                  <p className="text-sm font-semibold text-white">
-                    {selectedOpportunity.customer?.name ||
-                      "Unknown customer"}
-                  </p>
+              <Field label="Message / Action">
+                <textarea
+                  rows={6}
+                  value={
+                    followUpForm.message
+                  }
+                  onChange={(event) =>
+                    setFollowUpForm(
+                      (current) => ({
+                        ...current,
+                        message:
+                          event.target
+                            .value,
+                      }),
+                    )
+                  }
+                  className={`${fieldClass} resize-none`}
+                />
+              </Field>
 
-                  <p className="mt-1 text-xs text-gray-500">
-                    {cleanDisplayTitle(selectedOpportunity.title)} ·{" "}
-                    {formatMoney(
-                      Number(
-                        selectedOpportunity.estimated_value || 0,
-                      ),
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
+              <Field label="Scheduled At">
+                <input
+                  type="datetime-local"
+                  value={
+                    followUpForm.scheduledAt
+                  }
+                  onChange={(event) =>
+                    setFollowUpForm(
+                      (current) => ({
+                        ...current,
+                        scheduledAt:
+                          event.target
+                            .value,
+                      }),
+                    )
+                  }
+                  className={
+                    fieldClass
+                  }
+                  style={{
+                    colorScheme:
+                      "dark",
+                  }}
+                />
+              </Field>
 
-            <Field label="Channel">
-              <div className="grid grid-cols-3 gap-2">
-                {(["call", "sms", "email"] as const).map(
-                  (channel) => (
-                    <button
-                      key={channel}
-                      type="button"
-                      onClick={() =>
-                        handleFollowUpChannelChange(channel)
-                      }
-                      className={`rounded-xl border px-3 py-3 text-xs font-semibold capitalize transition ${
-                        followUpForm.channel === channel
-                          ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
-                          : "border-white/10 bg-white/[0.02] text-gray-500 hover:bg-white/5"
-                      }`}
-                    >
-                      {channel}
-                    </button>
-                  ),
-                )}
-              </div>
-            </Field>
-
-            <Field label="Message / Action">
-              <textarea
-                rows={6}
-                value={followUpForm.message}
-                onChange={(event) =>
-                  setFollowUpForm((current) => ({
-                    ...current,
-                    message: event.target.value,
-                  }))
+              <ModalActions
+                onCancel={
+                  closeFollowUpModal
                 }
-                className={`${fieldClass} resize-none`}
+                saving={saving}
+                submitLabel="Schedule Follow-Up"
               />
-            </Field>
-
-            <Field label="Scheduled At">
-              <input
-                type="datetime-local"
-                value={followUpForm.scheduledAt}
-                onChange={(event) =>
-                  setFollowUpForm((current) => ({
-                    ...current,
-                    scheduledAt: event.target.value,
-                  }))
-                }
-                className={fieldClass}
-                style={{
-                  colorScheme: "dark",
-                }}
-              />
-            </Field>
-
-            <ModalActions
-              onCancel={closeFollowUpModal}
-              saving={saving}
-              submitLabel="Schedule Follow-Up"
-            />
-          </form>
-        </Modal>
-      )}
+            </form>
+          </Modal>
+        )}
     </main>
   );
 }
@@ -1780,11 +2747,15 @@ function Metric({
   return (
     <div className="rounded-3xl border border-white/10 bg-[#0c1016] p-6 transition hover:border-white/15">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{title}</p>
+        <p className="text-sm text-gray-500">
+          {title}
+        </p>
 
         <span
           className={`h-2 w-2 rounded-full ${
-            success ? "bg-emerald-500" : "bg-indigo-500"
+            success
+              ? "bg-emerald-500"
+              : "bg-indigo-500"
           }`}
         />
       </div>
@@ -1795,7 +2766,9 @@ function Metric({
 
       <p
         className={`mt-2 text-xs font-medium ${
-          success ? "text-emerald-500" : "text-gray-500"
+          success
+            ? "text-emerald-500"
+            : "text-gray-500"
         }`}
       >
         {subtitle}
@@ -1829,15 +2802,16 @@ function EmptyState({
         {description}
       </p>
 
-      {actionLabel && onAction && (
-        <button
-          type="button"
-          onClick={onAction}
-          className="mt-6 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
-        >
-          {actionLabel}
-        </button>
-      )}
+      {actionLabel &&
+        onAction && (
+          <button
+            type="button"
+            onClick={onAction}
+            className="mt-6 rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-300 transition hover:bg-white/5"
+          >
+            {actionLabel}
+          </button>
+        )}
     </div>
   );
 }
@@ -1861,7 +2835,9 @@ function QuickAction({
           {title}
         </h3>
 
-        <span className="text-indigo-400">→</span>
+        <span className="text-indigo-400">
+          →
+        </span>
       </div>
 
       <p className="mt-2 text-sm leading-6 text-gray-500">
@@ -1906,7 +2882,9 @@ function Modal({
           </button>
         </div>
 
-        <div className="p-6">{children}</div>
+        <div className="p-6">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -1967,7 +2945,9 @@ function ModalActions({
         disabled={saving}
         className="rounded-xl bg-indigo-500 px-5 py-3 text-xs font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {saving ? "Saving..." : submitLabel}
+        {saving
+          ? "Saving..."
+          : submitLabel}
       </button>
     </div>
   );

@@ -1,6 +1,12 @@
 "use client";
 
-import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Sidebar from "@/components/Sidebar";
 import { createClient } from "@/lib/supabase";
 
@@ -44,7 +50,9 @@ function formatMoney(value: number) {
 
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
+
   if (!parts.length) return "CU";
+
   return parts
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
@@ -58,6 +66,7 @@ function typeLabel(type: string) {
     old_estimate: "Old Estimate",
     no_follow_up: "No Follow-Up",
   };
+
   return labels[type] ?? type.replaceAll("_", " ");
 }
 
@@ -71,6 +80,7 @@ function statusLabel(status: string) {
     closed: "Closed",
     lost: "Lost",
   };
+
   return labels[status] ?? status;
 }
 
@@ -80,6 +90,7 @@ function cleanTitle(title: string) {
 
 function displayEmail(email: string | null) {
   if (!email) return null;
+
   return email.replace(/@demo\.revora\.local$/i, "@example.com");
 }
 
@@ -100,12 +111,14 @@ function Modal({
         <div className="flex items-start justify-between border-b border-white/10 px-6 py-5">
           <div>
             <h2 className="text-lg font-semibold text-white">{title}</h2>
+
             {description && (
               <p className="mt-1 max-w-md text-sm leading-5 text-gray-500">
                 {description}
               </p>
             )}
           </div>
+
           <button
             type="button"
             onClick={onClose}
@@ -114,6 +127,7 @@ function Modal({
             ×
           </button>
         </div>
+
         <div className="px-6 py-6">{children}</div>
       </div>
     </div>
@@ -137,15 +151,18 @@ function Metric({
         <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500">
           {label}
         </p>
+
         <span
           className={`h-2 w-2 rounded-full ${
             accent === "emerald" ? "bg-emerald-400" : "bg-indigo-400"
           }`}
         />
       </div>
+
       <p className="mt-3 text-2xl font-semibold tracking-tight text-white">
         {value}
       </p>
+
       <p className="mt-1 text-xs text-gray-500">{caption}</p>
     </div>
   );
@@ -167,18 +184,26 @@ function StatusPill({ active }: { active: boolean }) {
 
 export default function CustomersPage() {
   const supabase = useMemo(() => createClient(), []);
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [businessId, setBusinessId] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [query, setQuery] = useState("");
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+
+  const [selectedCustomer, setSelectedCustomer] =
+    useState<Customer | null>(null);
+
   const [showCreate, setShowCreate] = useState(false);
-  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editingCustomer, setEditingCustomer] =
+    useState<Customer | null>(null);
+
   const [form, setForm] = useState<CustomerForm>(emptyForm);
 
   async function loadData() {
@@ -192,6 +217,7 @@ export default function CustomersPage() {
       } = await supabase.auth.getUser();
 
       if (userError) throw userError;
+
       if (!user) {
         window.location.href = "/login";
         return;
@@ -204,31 +230,37 @@ export default function CustomersPage() {
         .maybeSingle();
 
       if (profileError) throw profileError;
-      if (!profile?.business_id) throw new Error("No business workspace found.");
+
+      if (!profile?.business_id) {
+        throw new Error("No business workspace found.");
+      }
 
       setBusinessId(profile.business_id);
 
-      const [{ data: customerData, error: customerError }, { data: opportunityData, error: opportunityError }] =
-        await Promise.all([
-          supabase
-            .from("customers")
-            .select("id, business_id, name, email, phone")
-            .eq("business_id", profile.business_id)
-            .order("name", { ascending: true }),
-          supabase
-            .from("opportunities")
-            .select("id, customer_id, title, type, estimated_value, status, created_at")
-            .eq("business_id", profile.business_id)
-            .order("created_at", { ascending: false }),
-        ]);
+      const [customerResult, opportunityResult] = await Promise.all([
+        supabase
+          .from("customers")
+          .select("id, business_id, name, email, phone")
+          .eq("business_id", profile.business_id)
+          .order("name", { ascending: true }),
 
-      if (customerError) throw customerError;
-      if (opportunityError) throw opportunityError;
+        supabase
+          .from("opportunities")
+          .select(
+            "id, customer_id, title, type, estimated_value, status, created_at",
+          )
+          .eq("business_id", profile.business_id)
+          .order("created_at", { ascending: false }),
+      ]);
 
-      setCustomers((customerData ?? []) as Customer[]);
-      setOpportunities((opportunityData ?? []) as Opportunity[]);
+      if (customerResult.error) throw customerResult.error;
+      if (opportunityResult.error) throw opportunityResult.error;
+
+      setCustomers((customerResult.data ?? []) as Customer[]);
+      setOpportunities((opportunityResult.data ?? []) as Opportunity[]);
     } catch (err) {
       console.error("Customers load error:", err);
+
       setError(
         err instanceof Error
           ? err.message
@@ -247,13 +279,27 @@ export default function CustomersPage() {
     const active = opportunities.filter(
       (item) => !["recovered", "closed", "lost"].includes(item.status),
     );
-    const recovered = opportunities.filter((item) => item.status === "recovered");
+
+    const recovered = opportunities.filter(
+      (item) => item.status === "recovered",
+    );
 
     return {
       customerCount: customers.length,
-      activeCustomers: new Set(active.map((item) => item.customer_id).filter(Boolean)).size,
-      pipeline: active.reduce((sum, item) => sum + Number(item.estimated_value || 0), 0),
-      recovered: recovered.reduce((sum, item) => sum + Number(item.estimated_value || 0), 0),
+
+      activeCustomers: new Set(
+        active.map((item) => item.customer_id).filter(Boolean),
+      ).size,
+
+      pipeline: active.reduce(
+        (sum, item) => sum + Number(item.estimated_value || 0),
+        0,
+      ),
+
+      recovered: recovered.reduce(
+        (sum, item) => sum + Number(item.estimated_value || 0),
+        0,
+      ),
     };
   }, [customers, opportunities]);
 
@@ -262,14 +308,19 @@ export default function CustomersPage() {
       const customerOpportunities = opportunities.filter(
         (item) => item.customer_id === customer.id,
       );
+
       const active = customerOpportunities.filter(
         (item) => !["recovered", "closed", "lost"].includes(item.status),
       );
+
       const recovered = customerOpportunities.filter(
         (item) => item.status === "recovered",
       );
+
       const lastActivity = [...customerOpportunities].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        (a, b) =>
+          new Date(b.created_at).getTime() -
+          new Date(a.created_at).getTime(),
       )[0];
 
       return {
@@ -277,24 +328,28 @@ export default function CustomersPage() {
         all: customerOpportunities,
         active,
         recovered,
+
         pipeline: active.reduce(
           (sum, item) => sum + Number(item.estimated_value || 0),
           0,
         ),
+
         recoveredValue: recovered.reduce(
           (sum, item) => sum + Number(item.estimated_value || 0),
           0,
         ),
+
         lastActivity,
       };
     });
 
     const needle = query.trim().toLowerCase();
+
     if (!needle) return normalized;
 
     return normalized.filter(({ customer }) =>
-      [customer.name, customer.email ?? "", customer.phone ?? ""].some((value) =>
-        value.toLowerCase().includes(needle),
+      [customer.name, customer.email ?? "", customer.phone ?? ""].some(
+        (value) => value.toLowerCase().includes(needle),
       ),
     );
   }, [customers, opportunities, query]);
@@ -313,7 +368,9 @@ export default function CustomersPage() {
 
   function openEdit(customer: Customer) {
     resetMessages();
+
     setEditingCustomer(customer);
+
     setForm({
       name: customer.name,
       email: customer.email ?? "",
@@ -323,6 +380,7 @@ export default function CustomersPage() {
 
   function closeModal() {
     if (saving) return;
+
     setShowCreate(false);
     setEditingCustomer(null);
     setForm(emptyForm);
@@ -330,9 +388,11 @@ export default function CustomersPage() {
 
   async function saveCustomer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     if (!businessId) return;
 
     const name = form.name.trim();
+
     if (!name) {
       setError("Customer name is required.");
       return;
@@ -359,11 +419,15 @@ export default function CustomersPage() {
           .single();
 
         if (updateError) throw updateError;
+
         setCustomers((current) =>
           current.map((customer) =>
-            customer.id === editingCustomer.id ? (data as Customer) : customer,
+            customer.id === editingCustomer.id
+              ? (data as Customer)
+              : customer,
           ),
         );
+
         setSuccess("Customer updated successfully.");
       } else {
         const { data, error: insertError } = await supabase
@@ -376,9 +440,13 @@ export default function CustomersPage() {
           .single();
 
         if (insertError) throw insertError;
-        setCustomers((current) => [...current, data as Customer].sort((a, b) =>
-          a.name.localeCompare(b.name),
-        ));
+
+        setCustomers((current) =>
+          [...current, data as Customer].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          ),
+        );
+
         setSuccess("Customer created successfully.");
       }
 
@@ -387,6 +455,7 @@ export default function CustomersPage() {
       setForm(emptyForm);
     } catch (err) {
       console.error("Customer save error:", err);
+
       setError(
         err instanceof Error ? err.message : "Unable to save customer.",
       );
@@ -412,6 +481,7 @@ export default function CustomersPage() {
     const confirmed = window.confirm(
       `Delete ${customer.name}? This action cannot be undone.`,
     );
+
     if (!confirmed) return;
 
     setDeletingId(customer.id);
@@ -430,12 +500,15 @@ export default function CustomersPage() {
       setCustomers((current) =>
         current.filter((item) => item.id !== customer.id),
       );
+
       if (selectedCustomer?.id === customer.id) {
         setSelectedCustomer(null);
       }
+
       setSuccess("Customer deleted successfully.");
     } catch (err) {
       console.error("Customer delete error:", err);
+
       setError(
         err instanceof Error ? err.message : "Unable to delete customer.",
       );
@@ -453,12 +526,15 @@ export default function CustomersPage() {
           <div className="flex items-center justify-between border-b border-white/5 pb-4">
             <div className="flex items-center gap-3">
               <div className="h-2 w-2 rounded-full bg-indigo-400" />
+
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
                 Customer intelligence
               </p>
             </div>
+
             <div className="hidden items-center gap-3 sm:flex">
               <span className="text-xs text-gray-500">Revora HVAC</span>
+
               <div className="flex h-9 w-9 items-center justify-center rounded-full border border-indigo-400/20 bg-indigo-500/15 text-xs font-semibold text-indigo-300">
                 RH
               </div>
@@ -468,10 +544,14 @@ export default function CustomersPage() {
           <section className="pt-7">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-400">Customers</p>
+                <p className="text-sm font-medium text-gray-400">
+                  Customers
+                </p>
+
                 <h1 className="mt-2 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                   Customers
                 </h1>
+
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500 sm:text-base">
                   Understand every customer, their recovery opportunities,
                   follow-ups, and recovered revenue.
@@ -491,6 +571,7 @@ export default function CustomersPage() {
                     <path d="m14.5 14.5 3 3" strokeLinecap="round" />
                     <circle cx="8.5" cy="8.5" r="5.5" />
                   </svg>
+
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
@@ -498,6 +579,7 @@ export default function CustomersPage() {
                     className="w-44 bg-transparent text-sm text-white outline-none placeholder:text-gray-600"
                   />
                 </div>
+
                 <button
                   type="button"
                   onClick={openCreate}
@@ -515,17 +597,20 @@ export default function CustomersPage() {
               value={String(stats.customerCount)}
               caption="Active workspace customers"
             />
+
             <Metric
               label="Engaged customers"
               value={String(stats.activeCustomers)}
               caption="Customers with open recovery work"
               accent="indigo"
             />
+
             <Metric
               label="Active pipeline"
               value={formatMoney(stats.pipeline)}
               caption="Open opportunity value"
             />
+
             <Metric
               label="Recovered revenue"
               value={formatMoney(stats.recovered)}
@@ -552,18 +637,24 @@ export default function CustomersPage() {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-300">
                   Customer directory
                 </p>
+
                 <div className="mt-2 flex items-center gap-3">
                   <h2 className="text-xl font-semibold text-white sm:text-2xl">
                     Customer accounts
                   </h2>
+
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold text-gray-400">
-                    {stats.customerCount} {stats.customerCount === 1 ? "customer" : "customers"}
+                    {stats.customerCount}{" "}
+                    {stats.customerCount === 1 ? "customer" : "customers"}
                   </span>
                 </div>
+
                 <p className="mt-1 text-sm text-gray-500">
-                  One view of customer context, open pipeline, and recovered value.
+                  One view of customer context, open pipeline, and recovered
+                  value.
                 </p>
               </div>
+
               <div className="text-xs text-gray-500">
                 {customerRows.length} shown
               </div>
@@ -579,9 +670,12 @@ export default function CustomersPage() {
                   <p className="text-base font-semibold text-white">
                     No customer accounts found
                   </p>
+
                   <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">
-                    Add a customer to start building recovery history and pipeline context.
+                    Add a customer to start building recovery history and
+                    pipeline context.
                   </p>
+
                   <button
                     type="button"
                     onClick={openCreate}
@@ -594,6 +688,7 @@ export default function CustomersPage() {
                 customerRows.map((row) => {
                   const activeHistory = row.active.length > 0;
                   const hasRecovered = row.recovered.length > 0;
+
                   return (
                     <div
                       key={row.customer.id}
@@ -610,17 +705,28 @@ export default function CustomersPage() {
                               <h3 className="truncate text-lg font-semibold text-white">
                                 {row.customer.name}
                               </h3>
-                              <StatusPill active={activeHistory || hasRecovered} />
+
+                              <StatusPill
+                                active={activeHistory || hasRecovered}
+                              />
                             </div>
 
                             <div className="mt-2 flex flex-col gap-1 text-sm text-gray-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
-                              {row.customer.email && <span>{displayEmail(row.customer.email)}</span>}
-                              {row.customer.phone && <span>{row.customer.phone}</span>}
+                              {row.customer.email && (
+                                <span>
+                                  {displayEmail(row.customer.email)}
+                                </span>
+                              )}
+
+                              {row.customer.phone && (
+                                <span>{row.customer.phone}</span>
+                              )}
                             </div>
 
                             {row.lastActivity && (
                               <p className="mt-2 text-xs text-gray-600">
-                                Latest opportunity: {cleanTitle(row.lastActivity.title)}
+                                Latest opportunity:{" "}
+                                {cleanTitle(row.lastActivity.title)}
                               </p>
                             )}
                           </div>
@@ -631,22 +737,27 @@ export default function CustomersPage() {
                             <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
                               OPPORTUNITIES
                             </p>
+
                             <p className="mt-1 text-xl font-semibold text-white">
                               {row.all.length}
                             </p>
                           </div>
+
                           <div>
                             <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
                               PIPELINE
                             </p>
+
                             <p className="mt-1 text-xl font-semibold text-white">
                               {formatMoney(row.pipeline)}
                             </p>
                           </div>
+
                           <div>
                             <p className="text-[10px] font-semibold tracking-[0.14em] text-gray-600">
                               RECOVERED
                             </p>
+
                             <p className="mt-1 text-xl font-semibold text-emerald-300">
                               {formatMoney(row.recoveredValue)}
                             </p>
@@ -666,9 +777,14 @@ export default function CustomersPage() {
                                     : "border-white/10 bg-white/5 text-gray-400"
                                 }`}
                               >
-                                {typeLabel(opportunity.type)} · {statusLabel(opportunity.status)} · {formatMoney(Number(opportunity.estimated_value || 0))}
+                                {typeLabel(opportunity.type)} ·{" "}
+                                {statusLabel(opportunity.status)} ·{" "}
+                                {formatMoney(
+                                  Number(opportunity.estimated_value || 0),
+                                )}
                               </span>
                             ))}
+
                             {row.all.length > 3 && (
                               <span className="text-[10px] text-gray-600">
                                 +{row.all.length - 3} more
@@ -686,6 +802,7 @@ export default function CustomersPage() {
                         >
                           View
                         </button>
+
                         <button
                           type="button"
                           onClick={() => openEdit(row.customer)}
@@ -693,22 +810,32 @@ export default function CustomersPage() {
                         >
                           Edit
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => void deleteCustomer(row.customer)}
+                          onClick={() =>
+                            void deleteCustomer(row.customer)
+                          }
                           disabled={deletingId === row.customer.id}
                           className="rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-2.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {deletingId === row.customer.id ? "Deleting…" : "Delete"}
+                          {deletingId === row.customer.id
+                            ? "Deleting…"
+                            : "Delete"}
                         </button>
+
                         {row.customer.email && (
                           <a
-                            href={`mailto:${displayEmail(row.customer.email) ?? row.customer.email}`}
+                            href={`mailto:${
+                              displayEmail(row.customer.email) ??
+                              row.customer.email
+                            }`}
                             className="rounded-xl border border-white/10 px-4 py-2.5 text-xs font-semibold text-gray-400 transition hover:bg-white/5 hover:text-white"
                           >
                             Email
                           </a>
                         )}
+
                         {row.customer.phone && (
                           <a
                             href={`tel:${row.customer.phone}`}
@@ -746,11 +873,15 @@ export default function CustomersPage() {
               <label className="mb-2 block text-xs font-semibold text-gray-400">
                 Customer name
               </label>
+
               <input
                 autoFocus
                 value={form.name}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, name: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
                 }
                 placeholder="Sarah Jenkins"
                 className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
@@ -761,11 +892,15 @@ export default function CustomersPage() {
               <label className="mb-2 block text-xs font-semibold text-gray-400">
                 Email
               </label>
+
               <input
                 type="email"
                 value={form.email}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, email: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    email: event.target.value,
+                  }))
                 }
                 placeholder="customer@example.com"
                 className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
@@ -776,11 +911,15 @@ export default function CustomersPage() {
               <label className="mb-2 block text-xs font-semibold text-gray-400">
                 Phone
               </label>
+
               <input
                 type="tel"
                 value={form.phone}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, phone: event.target.value }))
+                  setForm((current) => ({
+                    ...current,
+                    phone: event.target.value,
+                  }))
                 }
                 placeholder="(512) 555-0141"
                 className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-gray-700 focus:border-indigo-400/40"
@@ -802,12 +941,17 @@ export default function CustomersPage() {
               >
                 Cancel
               </button>
+
               <button
                 type="submit"
                 disabled={saving}
                 className="rounded-2xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Saving…" : editingCustomer ? "Save Changes" : "Create Customer"}
+                {saving
+                  ? "Saving…"
+                  : editingCustomer
+                    ? "Save Changes"
+                    : "Create Customer"}
               </button>
             </div>
           </form>
@@ -824,12 +968,23 @@ export default function CustomersPage() {
             const items = opportunities.filter(
               (item) => item.customer_id === selectedCustomer.id,
             );
+
             const pipeline = items
-              .filter((item) => !["recovered", "closed", "lost"].includes(item.status))
-              .reduce((sum, item) => sum + Number(item.estimated_value || 0), 0);
+              .filter(
+                (item) =>
+                  !["recovered", "closed", "lost"].includes(item.status),
+              )
+              .reduce(
+                (sum, item) => sum + Number(item.estimated_value || 0),
+                0,
+              );
+
             const recovered = items
               .filter((item) => item.status === "recovered")
-              .reduce((sum, item) => sum + Number(item.estimated_value || 0), 0);
+              .reduce(
+                (sum, item) => sum + Number(item.estimated_value || 0),
+                0,
+              );
 
             return (
               <div className="space-y-5">
@@ -837,15 +992,18 @@ export default function CustomersPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-500/15 bg-indigo-500/10 text-sm font-bold text-indigo-300">
                     {getInitials(selectedCustomer.name)}
                   </div>
+
                   <div className="min-w-0">
                     <p className="text-base font-semibold text-white">
                       {selectedCustomer.name}
                     </p>
+
                     {selectedCustomer.email && (
                       <p className="mt-1 break-all text-sm text-gray-500">
                         {displayEmail(selectedCustomer.email)}
                       </p>
                     )}
+
                     {selectedCustomer.phone && (
                       <p className="mt-1 text-sm text-gray-500">
                         {selectedCustomer.phone}
@@ -856,16 +1014,33 @@ export default function CustomersPage() {
 
                 <div className="grid grid-cols-3 gap-3">
                   <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-                    <p className="text-[10px] tracking-[0.14em] text-gray-600">OPPORTUNITIES</p>
-                    <p className="mt-2 text-xl font-semibold text-white">{items.length}</p>
+                    <p className="text-[10px] tracking-[0.14em] text-gray-600">
+                      OPPORTUNITIES
+                    </p>
+
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {items.length}
+                    </p>
                   </div>
+
                   <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-                    <p className="text-[10px] tracking-[0.14em] text-gray-600">PIPELINE</p>
-                    <p className="mt-2 text-xl font-semibold text-white">{formatMoney(pipeline)}</p>
+                    <p className="text-[10px] tracking-[0.14em] text-gray-600">
+                      PIPELINE
+                    </p>
+
+                    <p className="mt-2 text-xl font-semibold text-white">
+                      {formatMoney(pipeline)}
+                    </p>
                   </div>
+
                   <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/5 p-4">
-                    <p className="text-[10px] tracking-[0.14em] text-emerald-500/70">RECOVERED</p>
-                    <p className="mt-2 text-xl font-semibold text-emerald-300">{formatMoney(recovered)}</p>
+                    <p className="text-[10px] tracking-[0.14em] text-emerald-500/70">
+                      RECOVERED
+                    </p>
+
+                    <p className="mt-2 text-xl font-semibold text-emerald-300">
+                      {formatMoney(recovered)}
+                    </p>
                   </div>
                 </div>
 
@@ -873,6 +1048,7 @@ export default function CustomersPage() {
                   <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
                     Opportunity history
                   </p>
+
                   <div className="space-y-2">
                     {items.length === 0 ? (
                       <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-5 text-sm text-gray-500">
@@ -888,12 +1064,17 @@ export default function CustomersPage() {
                             <p className="truncate text-sm font-medium text-white">
                               {cleanTitle(item.title)}
                             </p>
+
                             <p className="mt-1 text-xs text-gray-600">
-                              {typeLabel(item.type)} · {statusLabel(item.status)}
+                              {typeLabel(item.type)} ·{" "}
+                              {statusLabel(item.status)}
                             </p>
                           </div>
+
                           <p className="shrink-0 text-sm font-semibold text-white">
-                            {formatMoney(Number(item.estimated_value || 0))}
+                            {formatMoney(
+                              Number(item.estimated_value || 0),
+                            )}
                           </p>
                         </div>
                       ))
